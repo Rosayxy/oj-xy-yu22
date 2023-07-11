@@ -9,7 +9,11 @@ edition = "2021"
 actix-web = "4.3.1"
 env_logger = "0.10.0"
 log = "0.4.19"
-
+clap = { version = "4.3.10", features = ["derive"] }
+serde = { version = "1.0.164", features = ["derive"] }
+serde_json="1.0.96"
+chrono="0.4.26"
+wait-timeout="0.2.0"
 [dev-dependencies]
 assert-json-diff = "2.0.2"
 lazy_static = "1.4.0"
