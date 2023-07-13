@@ -14,6 +14,9 @@ serde = { version = "1.0.164", features = ["derive"] }
 serde_json="1.0.96"
 chrono="0.4.26"
 wait-timeout="0.2.0"
+rusqlite="0.29.0"
+r2d2="0.8.10"
+r2d2_sqlite="0.22.0"
 [dev-dependencies]
 assert-json-diff = "2.0.2"
 lazy_static = "1.4.0"
