@@ -55,7 +55,9 @@ struct ServerInfo {
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct Misc {
-    pack: Option<Vec<Vec<i32>>>,
+    packing: Option<Vec<Vec<i32>>>,
+    dynamic_ranking_ratio:Option<f64>,
+    special_judge:Option<Vec<String>>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct Case {
@@ -258,6 +260,41 @@ fn match_result(out_file: String, ans_file: String, compare: ProblemType) -> Enu
         }
     }
 }
+fn match_result_spj(list:Vec<String>)->(EnumResult,String){
+    let str1=list[0].clone();
+    let mut arg_list=Vec::new();
+    for i in 1..list.len(){
+        arg_list.push(list[i].clone());
+    }let mut command=Command::new(str1);
+    command.args(arg_list);
+    let out=command.output();
+    match out{
+        Err(r)=>{
+            return(EnumResult::SPJError,String::new());
+        }Ok(s)=>{
+            if !s.status.success(){
+                return (EnumResult::SPJError,String::from_utf8(s.stderr).unwrap());
+            }else{
+                let full_string=String::from_utf8(s.stdout).unwrap();
+                let vec_str:Vec<&str>=full_string.split('\n').collect();
+                if vec_str.len()<=1{
+                    return (EnumResult::SPJError,String::new());
+                }
+                let mut parse_str="\"".to_string();
+                parse_str.push_str(vec_str[0]);
+                parse_str.push('\"');
+                let enum_res:Result<EnumResult,serde_json::Error>=serde_json::from_str(&parse_str);
+                match enum_res{
+                    Ok(i)=>{
+                        return (i,vec_str[1].to_string());
+                    }Err(r)=>{
+                        return (EnumResult::SPJError,vec_str[1].to_string());
+                    }
+                }
+            }
+        }
+    }
+}
 #[post("/jobs")]
 async fn post_jobs(
     body: web::Json<Submit>,
@@ -298,7 +335,7 @@ async fn post_jobs(
             reason: ErrorReason::ErrNotFound,
             message: format!("Language {} not found.", body.language),
         });
-    } //TODO:比赛的检查
+    } 
       //check user id
     pool = pool.clone();
     let conn: usize = pool
@@ -317,6 +354,58 @@ async fn post_jobs(
             message: format!("User {} not found.", body.user_id),
         });
     }
+    //check contest_id
+    let cnt:usize=pool.get().unwrap().query_row("SELECT count(*) FROM contests WHERE id=?1", params![body.contest_id],|row| row.get(0) ).unwrap();
+    if cnt==0{
+        return HttpResponse::NotFound().json(ErrorMessage{code:3,reason:ErrorReason::ErrNotFound,message:format!("Contest {} not found.",body.contest_id)});
+    }
+    //create contest element
+    let mut conn=pool.get().unwrap();
+    let mut t=conn.prepare("SELECT * FROM contests WHERE id=?1").unwrap();
+    let contests_iter=t.query_map(params![body.contest_id], |row|{
+        Ok(Contest{
+            id:row.get(0)?,
+            name:row.get(1)?,
+            from:row.get(2)?,
+            to:row.get(3)?,
+            problem_ids:{
+                let t:String=row.get(4)?;
+                let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
+                ids
+            },
+            user_ids:{
+                let t:String=row.get(5)?;
+                let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
+                ids
+            },
+            submission_limit:row.get(6)?,
+        })
+    }).unwrap();
+    let mut vec_contest=Vec::new();
+    for i in contests_iter{
+        vec_contest.push(i.unwrap());
+    }//check if user_id is in contest user_ids
+    if !vec_contest[0].user_ids.contains(&body.user_id){
+        return HttpResponse::NotFound().json(ErrorMessage{
+            code:3,reason:ErrorReason::ErrNotFound,message:format!("user_id {} not found.",body.user_id),
+        });
+    }
+    //check if problem_id is in contest problem_ids
+    if !vec_contest[0].problem_ids.contains(&body.problem_id){
+        return HttpResponse::NotFound().json(ErrorMessage{
+            code:3,reason:ErrorReason::ErrNotFound,message:format!("problem_id {} not found.",body.problem_id),
+        });
+    }
+    //check if in the allowed time
+    let contest_from=Utc.datetime_from_str(&vec_contest[0].from, "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap();
+    let contest_to=Utc.datetime_from_str(&vec_contest[0].to, "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap();
+    if (Utc::now()>contest_to)||(Utc::now()<contest_from){
+        return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"submit time invalid".to_string()});
+    }//check if in submit times
+    let cnt:usize=pool.get().unwrap().query_row("SELECT count(*) FROM task WHERE user_id=?1 AND contest_id=?2", params![body.user_id,body.contest_id],|row| row.get(0) ).unwrap();
+    if (cnt as i32)>=vec_contest[0].submission_limit{
+        return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrRateLimit,message:"exceed submission limit".to_string()});
+    }
     //create temporary directory
     let mut vec_cases = Vec::new();
     for i in 0..config.problems[problem_index].cases.len() {
@@ -328,13 +417,13 @@ async fn post_jobs(
             info: String::from(""),
         });
     }
-    //determine id
+    //determine job id
     let mut id = 0;
     pool = pool.clone();
     let conn: usize = pool
         .get()
         .unwrap()
-        .query_row("SELECT count(*) FROM foo", [], |row| row.get(0))
+        .query_row("SELECT count(*) FROM task", [], |row| row.get(0))
         .unwrap();
     if conn != 0 {
         let pool = pool.clone();
@@ -450,8 +539,20 @@ async fn post_jobs(
     let execute_path = format!("{}/test", folder_name);
     let mut index = 1;
     let mut output_path = Vec::new();
+    //check if misc has packing
+    let mut has_packing=false;
+    let mut vec_packing:Vec<Vec<i32> >=Vec::new();
+    if let Some(i)=&config.problems[problem_index].misc{
+        if let Some(r)=&i.packing{
+            vec_packing=r.clone();
+            has_packing=true;
+        }
+    }
     //start executing program
     for i in &config.problems[problem_index].cases {
+        if let EnumResult::Skipped=message.cases[index].result{
+            continue;
+        }
         output_path.push(format!("{}/{}.out", folder_name, index));
         let out_path = format!("{}/{}.out", folder_name, index);
         let mut child = Command::new(&execute_path)
@@ -471,6 +572,39 @@ async fn post_jobs(
                 if !child_status.success() {
                     message.cases[index].result = EnumResult::RuntimeError;
                 } else {
+                    //if spj
+                    if let ProblemType::Spj=config.problems[problem_index].ty{
+                        match &config.problems[problem_index].misc{
+                            None=>{
+                                return HttpResponse::InternalServerError().json(ErrorMessage{
+                                    code:6,
+                                    reason:ErrorReason::ErrInternal,
+                                    message:"misc is None".to_string(),
+                                });
+                            }Some(i)=>{
+                                match &i.special_judge{
+                                    None=>{
+                                        return HttpResponse::InternalServerError().json(ErrorMessage{
+                                            code:6,
+                                            reason:ErrorReason::ErrInternal,
+                                            message:"misc is None".to_string(),
+                                        });
+                                    }Some(v)=>{
+                                        let mut vec_args=v.clone();
+                                        for i in &mut vec_args{
+                                            if i=="%OUTPUT%"{
+                                                *i=out_path.clone();
+                                            }else if i=="%ANSWER%"{
+                                                *i=config.problems[problem_index].cases[index]
+                                                .answer_file
+                                                .clone();
+                                            }
+                                        }(message.cases[index].result,message.cases[index].info)=match_result_spj(vec_args);
+                                    }
+                                }
+                            }
+                        }
+                    }else{
                     message.cases[index].result = match_result(
                         out_path,
                         config.problems[problem_index].cases[index]
@@ -478,6 +612,7 @@ async fn post_jobs(
                             .clone(),
                         config.problems[problem_index].ty.clone(),
                     );
+                }
                     if let EnumResult::Accepted = message.cases[index].result {
                         message.score += config.problems[problem_index].cases[index].score;
                     }
@@ -490,6 +625,27 @@ async fn post_jobs(
                 child.wait().unwrap();
             }
         }
+        //if misc and not accepted,update skipped
+        if has_packing{
+            match message.cases[index].result{
+                EnumResult::Accepted=>{}
+                _=>{
+                    //locate index;
+                    let mut row=0;
+                    let mut col=0;
+                    for i in 0..vec_packing.len(){
+                        for j in 0..vec_packing[i].len(){
+                            if vec_packing[i][j] as usize==index{
+                                row=i;col=j;
+                                break;
+                            }
+                        }
+                    }for i in col+1..vec_packing[row].len(){
+                        message.cases[(vec_packing[row][i] as usize)].result=EnumResult::Skipped;
+                    }
+                }
+            }
+        } 
         index += 1;
         //update task TABLE
         let updated_time = Utc::now();
@@ -507,6 +663,20 @@ async fn post_jobs(
     }
     //update final result
     message.state = State::Finished;
+    //patch has_packing
+    if has_packing{
+        for i in &vec_packing{
+            match message.cases[i[i.len()-1] as usize].result{
+                EnumResult::Skipped=>{
+                    for j in 0..i.len(){
+                        if let EnumResult::Accepted=message.cases[i[j] as usize].result{
+                            message.score-=config.problems[problem_index].cases[i[j] as usize].score;
+                        }
+                    }
+                }_=>{}
+            }
+        }
+    }
     message.updated_time = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
     let mut is_accepted = true;
     let mut case_index = 0;
@@ -523,6 +693,16 @@ async fn post_jobs(
             EnumResult::WrongAnswer => {
                 message.result = EnumResult::WrongAnswer;
                 is_accepted = false;
+                break;
+            }
+            EnumResult::SPJError=>{
+                message.result=EnumResult::SPJError;
+                is_accepted=false;
+                break;
+            }
+            EnumResult::TimeLimitExceeded=>{
+                message.result=EnumResult::TimeLimitExceeded;
+                is_accepted=false;
                 break;
             }
             _ => {}
@@ -780,7 +960,8 @@ async fn put_jobs(
                 score: row.get(10)?,
                 cases: {
                     let mut t: String = row.get(11)?;
-                    serde_json::from_str(&t).unwrap()
+                    let mut vec_cases:Vec<CaseResult>=serde_json::from_str(&t).unwrap();
+                    vec_cases
                 },
             })
         })
@@ -813,6 +994,12 @@ async fn put_jobs(
             break;
         }
         language_index += 1;
+    }
+    let mut problem=config.problems[0].clone();
+    for i in &config.problems{
+        if i.id==message.submission.problem_id{
+            problem=i.clone();
+        }
     }
     let task_id = id;
     std::fs::create_dir(format!("temp{}", task_id));
@@ -884,7 +1071,19 @@ async fn put_jobs(
     let execute_path = format!("{}/test", folder_name);
     let mut index = 1;
     let mut output_path = Vec::new();
-    for i in &config.problems[message.submission.problem_id as usize].cases {
+    //check if misc has packing
+    let mut has_packing=false;
+    let mut vec_packing:Vec<Vec<i32> >=Vec::new();
+    if let Some(i)=&problem.misc{
+        if let Some(r)=&i.packing{
+            vec_packing=r.clone();
+            has_packing=true;
+        }
+    }
+    for i in &problem.cases {
+        if let EnumResult::Skipped=message.cases[index].result{
+            continue;
+        }
         let out_path = format!("{}/{}.out", folder_name, index);
         output_path.push(out_path.clone());
         let mut child = Command::new(&execute_path)
@@ -904,17 +1103,49 @@ async fn put_jobs(
                 if !child_status.success() {
                     message.cases[index].result = EnumResult::RuntimeError;
                 } else {
+                    //check if spj
+                    if let ProblemType::Spj=problem.ty{
+                        match &problem.misc{
+                            None=>{
+                                return HttpResponse::InternalServerError().json(ErrorMessage{
+                                    code:6,
+                                    reason:ErrorReason::ErrInternal,
+                                    message:"misc is None".to_string(),
+                                });
+                            }Some(i)=>{
+                                match &i.special_judge{
+                                    None=>{
+                                        return HttpResponse::InternalServerError().json(ErrorMessage{
+                                            code:6,
+                                            reason:ErrorReason::ErrInternal,
+                                            message:"misc is None".to_string(),
+                                        });
+                                    }Some(v)=>{
+                                        let mut vec_args=v.clone();
+                                        for i in &mut vec_args{
+                                            if i=="%OUTPUT%"{
+                                                *i=out_path.clone();
+                                            }else if i=="%ANSWER%"{
+                                                *i=problem.cases[index]
+                                                .answer_file
+                                                .clone();
+                                            }
+                                        }(message.cases[index].result,message.cases[index].info)=match_result_spj(vec_args);
+                                    }
+                                }
+                            }
+                        }
+                    }else{
                     message.cases[index].result = match_result(
                         out_path,
-                        config.problems[message.submission.problem_id as usize].cases[index]
+                        problem.cases[index]
                             .answer_file
                             .clone(),
-                        config.problems[message.submission.problem_id as usize]
-                            .ty
-                            .clone(),
+                        problem.ty.clone(),
                     );
+                }
                     if let EnumResult::Accepted = message.cases[index].result {
-                        message.score += config.problems[message.submission.problem_id as usize]
+                        message.score += problem
                             .cases[index]
                             .score;
                     }
@@ -927,6 +1158,27 @@ async fn put_jobs(
                 child.wait().unwrap();
             }
         }
+        //if has packing and is not accepted,update skipped
+        if has_packing{
+            match message.cases[index].result{
+                EnumResult::Accepted=>{}
+                _=>{
+                    //locate index;
+                    let mut row=0;
+                    let mut col=0;
+                    for i in 0..vec_packing.len(){
+                        for j in 0..vec_packing[i].len(){
+                            if vec_packing[i][j] as usize==index{
+                                row=i;col=j;
+                                break;
+                            }
+                        }
+                    }for i in col+1..vec_packing[row].len(){
+                        message.cases[(vec_packing[row][i] as usize)].result=EnumResult::Skipped;
+                    }
+                }
+            }
+        } 
         index += 1;
         //update task TABLE
         let updated_time = Utc::now();
@@ -944,6 +1196,20 @@ async fn put_jobs(
     }
     //update final result
     message.state = State::Finished;
+    //patch has_packing
+    if has_packing{
+        for i in &vec_packing{
+            match message.cases[i[i.len()-1] as usize].result{
+                EnumResult::Skipped=>{
+                    for j in 0..i.len(){
+                        if let EnumResult::Accepted=message.cases[i[j] as usize].result{
+                            message.score-=problem.cases[i[j] as usize].score;
+                        }
+                    }
+                }_=>{}
+            }
+        }
+    }
     message.updated_time = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
     let mut is_accepted = true;
     let mut case_index = 0;
@@ -960,6 +1226,16 @@ async fn put_jobs(
             EnumResult::WrongAnswer => {
                 message.result = EnumResult::WrongAnswer;
                 is_accepted = false;
+                break;
+            }
+            EnumResult::SPJError=>{
+                message.result=EnumResult::SPJError;
+                is_accepted=false;
+                break;
+            }
+            EnumResult::TimeLimitExceeded=>{
+                message.result=EnumResult::TimeLimitExceeded;
+                is_accepted=false;
                 break;
             }
             _ => {}
@@ -1218,7 +1494,60 @@ async fn get_contest_ranklist(
     config: web::Data<Configure>,
 ) -> impl Responder {
     let mut vec_ranklist: Vec<RanklistEntry> = Vec::new();
-    if contestid == 0.into() {
+    let mut vec_problem_id = Vec::new();
+    //check if valid contest_id
+    if contestid!=0.into(){
+        let id=*contestid;
+        let cnt:usize=pool.get().unwrap().query_row("SELECT count(*) FROM contests WHERE id=?1", params![id],|row| row.get(0) ).unwrap();
+        if cnt==0{
+            return HttpResponse::NotFound().json(ErrorMessage{code:3,reason:ErrorReason::ErrNotFound,message:format!("Contest {} not found.",id)});
+        }
+    //get contest info from table
+    let mut conn=pool.get().unwrap();
+    let mut t=conn.prepare("SELECT * FROM contests WHERE id=?1").unwrap();
+    let contests_iter=t.query_map(params![*contestid], |row|{
+        Ok(Contest{
+            id:row.get(0)?,
+            name:row.get(1)?,
+            from:row.get(2)?,
+            to:row.get(3)?,
+            problem_ids:{
+                let t:String=row.get(4)?;
+                let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
+                ids
+            },
+            user_ids:{
+                let t:String=row.get(5)?;
+                let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
+                ids
+            },
+            submission_limit:row.get(6)?,
+        })
+    }).unwrap();
+    let mut v=Vec::new();
+    for i in contests_iter{
+        v.push(i.unwrap());
+    }vec_problem_id=v[0].problem_ids.clone();
+    for i in &v[0].user_ids{
+        let c1 = pool.get().unwrap();
+        let mut conn = c1.prepare("SELECT * FROM users WHERE id=?1").unwrap();
+        let users_iter = conn
+            .query_map([*i], |row| {
+                Ok(User {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                })
+            }).unwrap();
+        for i in users_iter {
+            vec_ranklist.push(RanklistEntry {
+                user: i.unwrap(),
+                rank: 0,
+                final_score: 0.0,
+                scores: Vec::new(),
+            });
+        }
+    }
+}else {
         //create ranklist vector,get all the users
         pool = pool.clone();
         let c1 = pool.get().unwrap();
@@ -1239,11 +1568,11 @@ async fn get_contest_ranklist(
                 scores: Vec::new(),
             });
         }
-        //for every user,iterate all problems
-        let mut vec_problem_id = Vec::new();
+        //for every user,iterate all problems        
         for i in &config.problems {
             vec_problem_id.push(i.id);
         }
+    }
         vec_problem_id.sort();
         for user in &mut vec_ranklist {
             for prob_id in &vec_problem_id {
@@ -1365,12 +1694,12 @@ async fn get_contest_ranklist(
                     }
                 });
             }
-        }return HttpResponse::Ok().json(vec_return);
+        return HttpResponse::Ok().json(vec_return);
     }
     HttpResponse::Ok().json({})
 }
 #[derive(Serialize,Deserialize)]
-struct Contest{
+struct ContestInput{
     id:Option<i32>,
     name:String,
     from:String,
@@ -1378,6 +1707,188 @@ struct Contest{
     problem_ids:Vec<i32>,
     user_ids:Vec<i32>,
     submission_limit:i32,
+}
+#[derive(Serialize,Deserialize)]
+struct Contest{
+    id:i32,
+    name:String,
+    from:String,
+    to:String,
+    problem_ids:Vec<i32>,
+    user_ids:Vec<i32>,
+    submission_limit:i32,
+}
+#[post("/contests")]
+async fn post_contest(contest: web::Json<ContestInput>,
+config: web::Data<Configure>,
+mut pool: web::Data<Pool<SqliteConnectionManager>>,
+) -> impl Responder{
+    //check id exists
+    let mut id=0;
+    match contest.id{
+        None=>{
+            let cnt:usize=pool.get().unwrap().query_row("SELECT count(*) FROM contests", params![],|row| row.get(0) ).unwrap();
+            if cnt==0{
+                id=1;
+            }else{
+            let conn: usize = pool
+        .get()
+        .unwrap()
+        .query_row("SELECT max(id) FROM contests", [], |row| row.get(0))
+        .unwrap();
+        id=conn+1;}
+        }Some(i)=>{
+            if i==0{
+                return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid contest id".to_string()});
+            }
+            let conn:usize=pool.get().unwrap().query_row("SELECT count(*) FROM contests WHERE id=?1", params![i],|row| row.get(0) ).unwrap();
+            if conn==0{
+                return HttpResponse::NotFound().json(ErrorMessage{code:3,reason:ErrorReason::ErrNotFound,message:format!("Contest {} not found.",i)});
+            }
+        }        
+    }//check if invalid
+    //check if valid from and to time
+    let from_time=Utc.datetime_from_str(&contest.from, "%Y-%m-%dT%H:%M:%S%.3fZ");
+    if let Err(r)=from_time{
+        return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid argument from".to_string()});
+    }
+    let to_time=Utc.datetime_from_str(&contest.to, "%Y-%m-%dT%H:%M:%S%.3fZ");
+    if let Err(r)=to_time{
+        return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid argument to".to_string()});
+    }
+    //check valid user_id
+    //check if redundant user_id
+    if contest.user_ids.len()>1{
+        for i in 1..contest.user_ids.len(){
+            for j in 0..i{
+                if contest.user_ids[i]==contest.user_ids[j]{
+                    return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid argument user_ids".to_string()});
+                }
+            }
+        }
+    }//check if exists user_id
+    for i in &contest.user_ids{
+        pool=pool.clone();
+        let t:usize=pool.get().unwrap().query_row("SELECT count(*) FROM users WHERE id=?1", params![*i], |row| row.get(0)).unwrap();
+        if *i==0{
+            return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid argument user_ids".to_string()});
+        }
+        if t==0{
+            return HttpResponse::NotFound().json(ErrorMessage{code:3,reason:ErrorReason::ErrNotFound,message:format!("user_id {} not found.",i)});
+        }
+    }//check if redundant problem_id
+    if contest.problem_ids.len()>1{
+        for i in 1..contest.problem_ids.len(){
+            for j in 0..i{
+                if contest.problem_ids[i]==contest.problem_ids[j]{
+                    return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid argument user_ids".to_string()});
+                }
+            }
+        }
+    }//check if exists problem_id
+    let mut all_problemid_vec=Vec::new();
+    for i in &config.problems{
+        all_problemid_vec.push(i.id);
+    }for i in &contest.problem_ids{
+        if *i==0{
+            return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid argument problem_ids".to_string()});
+        }
+        let mut is_find=false;
+        for j in &all_problemid_vec{
+            if i==j{
+                is_find=true;
+                break;
+            }
+        }if !is_find{
+            return HttpResponse::NotFound().json(ErrorMessage{code:3,reason:ErrorReason::ErrNotFound,message:format!("problem_id {} not found.",i)});
+        }
+    }
+    //new Contest and insert in table/update
+    let contest_new=Contest{
+        id:id as i32,
+        name:contest.name.clone(),
+        from:contest.from.clone(),
+        to:contest.to.clone(),
+        problem_ids:contest.problem_ids.clone(),
+        user_ids:contest.user_ids.clone(),
+        submission_limit:contest.submission_limit,
+    };
+    //update/new in table
+    match contest.id{
+        Some(i)=>{
+            pool.get().unwrap().execute("UPDATE contests SET name=?1,from=?2,to=?3,problem_ids=?4,user_ids=?5,submission_limit=?6 WHERE id=?7", params![contest_new.name.clone(),contest_new.from.clone(),contest_new.to.clone(),serde_json::to_string(&contest_new.problem_ids).unwrap(),serde_json::to_string(&contest_new.user_ids).unwrap(),contest_new.submission_limit,id]).unwrap();
+        }None=>{
+            pool.get().unwrap().execute("INSERT INTO contests VALUES (?1,?2,?3,?4,?5,?6,?7)", (id,contest_new.name.clone(),contest_new.from.clone(),contest_new.to.clone(),serde_json::to_string(&contest_new.problem_ids).unwrap(),serde_json::to_string(&contest_new.user_ids).unwrap(),contest_new.submission_limit)).unwrap();
+        }
+    }
+    return HttpResponse::Ok().json(contest_new);
+}
+#[get("/contests")]
+async fn get_contests(config: web::Data<Configure>,
+    mut pool: web::Data<Pool<SqliteConnectionManager>>)->impl Responder{
+        let mut conn=pool.get().unwrap();
+        let mut t=conn.prepare("SELECT * FROM contests").unwrap();
+        let contests_iter=t.query_map([], |row|{
+            Ok(Contest{
+                id:row.get(0)?,
+                name:row.get(1)?,
+                from:row.get(2)?,
+                to:row.get(3)?,
+                problem_ids:{
+                    let t:String=row.get(4)?;
+                    let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
+                    ids
+                },
+                user_ids:{
+                    let t:String=row.get(5)?;
+                    let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
+                    ids
+                },
+                submission_limit:row.get(6)?,
+            })
+        }).unwrap();
+        let mut vec_return=Vec::new();
+        for i in contests_iter{
+            let t=i.unwrap();
+            if t.id!=0{
+                vec_return.push(t);
+            }
+        }vec_return.sort_by(|a,b|{a.id.cmp(&b.id)});
+        return HttpResponse::Ok().json(vec_return);
+    }
+#[get("/contests/{id}")]
+async fn get_contest_id(id:web::Path<i32>, mut pool: web::Data<Pool<SqliteConnectionManager>>)->impl Responder{
+    pool=pool.clone();
+    let conn:usize=pool.get().unwrap().query_row("SELECT count(*) FROM users WHERE id=?1", params![*id], |row| row.get(0)).unwrap();
+    if conn==0{
+        return HttpResponse::NotFound().json(ErrorMessage{code:3,reason:ErrorReason::ErrNotFound,message:format!("Contest {} not found.",id)});
+    }let mut conn=pool.get().unwrap();
+    let mut t=conn.prepare("SELECT * FROM contests WHERE id=?1").unwrap();
+    let id_i32:i32=*id;
+    let contests_iter=t.query_map(params![id_i32], |row|{
+        Ok(Contest{
+            id:row.get(0)?,
+            name:row.get(1)?,
+            from:row.get(2)?,
+            to:row.get(3)?,
+            problem_ids:{
+                let t:String=row.get(4)?;
+                let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
+                ids
+            },
+            user_ids:{
+                let t:String=row.get(5)?;
+                let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
+                ids
+            },
+            submission_limit:row.get(6)?,
+        })
+    }).unwrap();
+    let mut v=Vec::new();
+    for i in contests_iter{
+        v.push(i.unwrap());
+    }
+    return HttpResponse::Ok().json(v.pop().unwrap());
 }
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -1434,10 +1945,10 @@ async fn main() -> std::io::Result<()> {
         .unwrap()
         .execute(
             "
-    CREATE TABLE IF NOT EXISTS users{
+    CREATE TABLE IF NOT EXISTS users(
         id INTERGER PRIMARY KEY,
         name TEXT NOT NULL,
-    }
+    )
     ",
             params![],
         )
@@ -1456,6 +1967,16 @@ async fn main() -> std::io::Result<()> {
             .unwrap()
             .execute("INSERT INTO users (id, name) VALUES (?1, ?2)", (0, "root"));
     }
+    pool.get().unwrap().execute("CREATE TABLE IF NOT EXISTS contests(
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        from TEXT NOT NULL,
+        to TEXT NOT NULL,
+        problem_ids TEXT NOT NULL,
+        user_ids TEXT NOT NULL,
+        submission_limit INTEGER PRIMARY KEY,
+    )",params![]).unwrap();
+    //TODO:创建比赛id为0的比赛,补充：可能不需要
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(config.clone()))
