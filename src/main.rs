@@ -1,8 +1,9 @@
 use actix_web::dev::Server;
+use actix_web::rt::spawn;
+use actix_web::web::block;
 use actix_web::{
     get, middleware::Logger, post, put, web, App, HttpResponse, HttpServer, Responder,
 };
-use actix_web::rt::spawn;
 use chrono::prelude::*;
 use clap::Parser;
 use env_logger;
@@ -16,10 +17,9 @@ use std::cmp::Ordering;
 use std::fs::{self, File};
 use std::io::{Error, ErrorKind};
 use std::io::{Read, Write};
-use std::process::{Command,Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use wait_timeout::ChildExt;
-use actix_web::web::block;
 #[get("/hello/{name}")]
 async fn greet(name: web::Path<String>) -> impl Responder {
     log::info!(target: "greet_handler", "Greeting {}", name);
@@ -58,8 +58,8 @@ struct ServerInfo {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct Misc {
     packing: Option<Vec<Vec<i32>>>,
-    dynamic_ranking_ratio:Option<f64>,
-    special_judge:Option<Vec<String>>,
+    dynamic_ranking_ratio: Option<f64>,
+    special_judge: Option<Vec<String>>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct Case {
@@ -97,7 +97,7 @@ fn get_configure(json_path: String) -> Configure {
     let parse = serde_json::from_str(&buffer).unwrap();
     parse
 }
-#[derive(Serialize, Deserialize, Debug,Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Submit {
     source_code: String,
     language: String,
@@ -121,7 +121,7 @@ struct ErrorMessage {
     reason: ErrorReason,
     message: String,
 }
-#[derive(Serialize, Deserialize, Debug,Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 enum State {
     Queueing,
     Running,
@@ -145,7 +145,7 @@ impl State {
         return state;
     }
 }
-#[derive(Serialize, Deserialize, Debug,Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 enum EnumResult {
     Waiting,
     Running,
@@ -193,7 +193,7 @@ impl EnumResult {
         return state;
     }
 }
-#[derive(Serialize, Deserialize, Debug,Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct CaseResult {
     id: i32,
     result: EnumResult,
@@ -201,7 +201,7 @@ struct CaseResult {
     memory: i32,
     info: String,
 }
-#[derive(Serialize, Deserialize, Debug,Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Message {
     id: i32,
     created_time: String,
@@ -225,7 +225,11 @@ struct JobQuery {
     result: Option<EnumResult>,
 }
 fn match_result(out_file: String, ans_file: String, compare: ProblemType) -> EnumResult {
-    println!("out_file:{},ans_file:{}",out_file.clone(),ans_file.clone());
+    println!(
+        "out_file:{},ans_file:{}",
+        out_file.clone(),
+        ans_file.clone()
+    );
     let mut out_stream = File::open(out_file).unwrap();
     let mut ans_stream = File::open(ans_file).unwrap();
     let mut buffer_out = String::new();
@@ -263,48 +267,59 @@ fn match_result(out_file: String, ans_file: String, compare: ProblemType) -> Enu
         }
     }
 }
-fn match_result_spj(list:Vec<String>)->(EnumResult,String){
-    let str1=list[0].clone();
-    let mut arg_list=Vec::new();
-    for i in 1..list.len(){
+fn match_result_spj(list: Vec<String>) -> (EnumResult, String) {
+    let str1 = list[0].clone();
+    let mut arg_list = Vec::new();
+    for i in 1..list.len() {
         arg_list.push(list[i].clone());
-    }let mut command=Command::new(str1);
+    }
+    let mut command = Command::new(str1);
     command.args(arg_list);
-    let out=command.output();
-    match out{
-        Err(r)=>{
-            return(EnumResult::SPJError,String::new());
-        }Ok(s)=>{
-            if !s.status.success(){
-                return (EnumResult::SPJError,String::from_utf8(s.stderr).unwrap());
-            }else{
-                let full_string=String::from_utf8(s.stdout).unwrap();
-                let vec_str:Vec<&str>=full_string.split('\n').collect();
-                if vec_str.len()<=1{
-                    return (EnumResult::SPJError,String::new());
+    let out = command.output();
+    match out {
+        Err(r) => {
+            return (EnumResult::SPJError, String::new());
+        }
+        Ok(s) => {
+            if !s.status.success() {
+                return (EnumResult::SPJError, String::from_utf8(s.stderr).unwrap());
+            } else {
+                let full_string = String::from_utf8(s.stdout).unwrap();
+                let vec_str: Vec<&str> = full_string.split('\n').collect();
+                if vec_str.len() <= 1 {
+                    return (EnumResult::SPJError, String::new());
                 }
-                let mut parse_str="\"".to_string();
+                let mut parse_str = "\"".to_string();
                 parse_str.push_str(vec_str[0]);
                 parse_str.push('\"');
-                let enum_res:Result<EnumResult,serde_json::Error>=serde_json::from_str(&parse_str);
-                match enum_res{
-                    Ok(i)=>{
-                        return (i,vec_str[1].to_string());
-                    }Err(r)=>{
-                        return (EnumResult::SPJError,vec_str[1].to_string());
+                let enum_res: Result<EnumResult, serde_json::Error> =
+                    serde_json::from_str(&parse_str);
+                match enum_res {
+                    Ok(i) => {
+                        return (i, vec_str[1].to_string());
+                    }
+                    Err(r) => {
+                        return (EnumResult::SPJError, vec_str[1].to_string());
                     }
                 }
             }
         }
     }
 }
-fn execute_input(mut message:Message,mut pool:web::Data<Pool<SqliteConnectionManager> >,problem:Problem,language:Language){
+fn execute_input(
+    mut message: Message,
+    mut pool: web::Data<Pool<SqliteConnectionManager>>,
+    problem: Problem,
+    language: Language,
+) {
     let task_id = message.id;
     std::fs::create_dir(format!("temp{}", task_id));
     let folder_name = format!("temp{}", task_id);
     let src_path = format!("temp{}/{}", task_id, language.file_name);
     let mut buffer = std::fs::File::create(src_path.clone()).unwrap();
-    buffer.write(message.submission.source_code.as_bytes()).unwrap();
+    buffer
+        .write(message.submission.source_code.as_bytes())
+        .unwrap();
     let mut args_vec = language.command.clone();
     for mut i in &mut args_vec {
         if i == "%OUTPUT%" {
@@ -315,9 +330,10 @@ fn execute_input(mut message:Message,mut pool:web::Data<Pool<SqliteConnectionMan
     }
     //print arg_vec
     print!("argsvec:");
-    for i in &args_vec{
-        print!("{} ",i);
-    }println!("");
+    for i in &args_vec {
+        print!("{} ", i);
+    }
+    println!("");
     let first_arg = args_vec.remove(0);
     let compile_time_start = Utc::now();
     message.state = State::Running;
@@ -354,10 +370,11 @@ fn execute_input(mut message:Message,mut pool:web::Data<Pool<SqliteConnectionMan
                 message.updated_time.clone(),
                 message.id,
             ),
-        );std::fs::remove_dir_all(folder_name).unwrap();
+        );
+        std::fs::remove_dir_all(folder_name).unwrap();
         return;
-    }else if !status.unwrap().success(){
-            message.state = State::Finished;
+    } else if !status.unwrap().success() {
+        message.state = State::Finished;
         message.result = EnumResult::CompilationError;
         message.cases[0].result = EnumResult::CompilationError;
         let conn = pool.get().unwrap().execute(
@@ -369,9 +386,10 @@ fn execute_input(mut message:Message,mut pool:web::Data<Pool<SqliteConnectionMan
                 message.updated_time.clone(),
                 message.id,
             ),
-        );std::fs::remove_dir_all(folder_name).unwrap();
+        );
+        std::fs::remove_dir_all(folder_name).unwrap();
         return;
-        }
+    }
     message.cases[0].result = EnumResult::CompilationSuccess;
     //update task table
     let conn = pool.get().unwrap().execute(
@@ -386,23 +404,23 @@ fn execute_input(mut message:Message,mut pool:web::Data<Pool<SqliteConnectionMan
     let mut index = 1;
     let mut output_path = Vec::new();
     //check if misc has packing
-    let mut has_packing=false;
-    let mut vec_packing:Vec<Vec<i32> >=Vec::new();
-    if let Some(i)=&problem.misc{
-        if let Some(r)=&i.packing{
-            vec_packing=r.clone();
-            has_packing=true;
+    let mut has_packing = false;
+    let mut vec_packing: Vec<Vec<i32>> = Vec::new();
+    if let Some(i) = &problem.misc {
+        if let Some(r) = &i.packing {
+            vec_packing = r.clone();
+            has_packing = true;
         }
     }
     //start executing program
     for i in &problem.cases {
-        if let EnumResult::Skipped=message.cases[index].result{
+        if let EnumResult::Skipped = message.cases[index].result {
             continue;
         }
         output_path.push(format!("{}/{}.out", folder_name, index));
         let out_path = format!("{}/{}.out", folder_name, index);
-        let out_file=File::create(&out_path).unwrap();
-        let in_file=File::open(&i.input_file).unwrap();
+        let out_file = File::create(&out_path).unwrap();
+        let in_file = File::open(&i.input_file).unwrap();
         let mut child = Command::new(&execute_path)
             .stdin(Stdio::from(in_file))
             .stdout(Stdio::from(out_file))
@@ -419,38 +437,34 @@ fn execute_input(mut message:Message,mut pool:web::Data<Pool<SqliteConnectionMan
                     message.cases[index].result = EnumResult::RuntimeError;
                 } else {
                     //if spj
-                    if let ProblemType::Spj=problem.ty{
-                        match &problem.misc{
-                            None=>{
-                            }Some(i)=>{
-                                match &i.special_judge{
-                                    None=>{
-                                    }Some(v)=>{
-                                        let mut vec_args=v.clone();
-                                        for i in &mut vec_args{
-                                            if i=="%OUTPUT%"{
-                                                *i=out_path.clone();
-                                            }else if i=="%ANSWER%"{
-                                                *i=problem.cases[index-1]
-                                                .answer_file
-                                                .clone();
-                                            }
-                                        }(message.cases[index].result,message.cases[index].info)=match_result_spj(vec_args);
+                    if let ProblemType::Spj = problem.ty {
+                        match &problem.misc {
+                            None => {}
+                            Some(i) => match &i.special_judge {
+                                None => {}
+                                Some(v) => {
+                                    let mut vec_args = v.clone();
+                                    for i in &mut vec_args {
+                                        if i == "%OUTPUT%" {
+                                            *i = out_path.clone();
+                                        } else if i == "%ANSWER%" {
+                                            *i = problem.cases[index - 1].answer_file.clone();
+                                        }
                                     }
+                                    (message.cases[index].result, message.cases[index].info) =
+                                        match_result_spj(vec_args);
                                 }
-                            }
+                            },
                         }
-                    }else{
-                    message.cases[index].result = match_result(
-                        out_path,
-                        problem.cases[index-1]
-                            .answer_file
-                            .clone(),
-                        problem.ty.clone(),
-                    );
-                }
+                    } else {
+                        message.cases[index].result = match_result(
+                            out_path,
+                            problem.cases[index - 1].answer_file.clone(),
+                            problem.ty.clone(),
+                        );
+                    }
                     if let EnumResult::Accepted = message.cases[index].result {
-                        message.score += problem.cases[index-1].score;
+                        message.score += problem.cases[index - 1].score;
                     }
                 }
             }
@@ -462,26 +476,28 @@ fn execute_input(mut message:Message,mut pool:web::Data<Pool<SqliteConnectionMan
             }
         }
         //if misc and not accepted,update skipped
-        if has_packing{
-            match message.cases[index].result{
-                EnumResult::Accepted=>{}
-                _=>{
+        if has_packing {
+            match message.cases[index].result {
+                EnumResult::Accepted => {}
+                _ => {
                     //locate index;
-                    let mut row=0;
-                    let mut col=0;
-                    for i in 0..vec_packing.len(){
-                        for j in 0..vec_packing[i].len(){
-                            if vec_packing[i][j] as usize==index{
-                                row=i;col=j;
+                    let mut row = 0;
+                    let mut col = 0;
+                    for i in 0..vec_packing.len() {
+                        for j in 0..vec_packing[i].len() {
+                            if vec_packing[i][j] as usize == index {
+                                row = i;
+                                col = j;
                                 break;
                             }
                         }
-                    }for i in col+1..vec_packing[row].len(){
-                        message.cases[vec_packing[row][i] as usize].result=EnumResult::Skipped;
+                    }
+                    for i in col + 1..vec_packing[row].len() {
+                        message.cases[vec_packing[row][i] as usize].result = EnumResult::Skipped;
                     }
                 }
             }
-        } 
+        }
         index += 1;
         //update task TABLE
         let updated_time = Utc::now();
@@ -500,16 +516,17 @@ fn execute_input(mut message:Message,mut pool:web::Data<Pool<SqliteConnectionMan
     //update final result
     message.state = State::Finished;
     //patch has_packing
-    if has_packing{
-        for i in &vec_packing{
-            match message.cases[i[i.len()-1] as usize].result{
-                EnumResult::Skipped=>{
-                    for j in 0..i.len(){
-                        if let EnumResult::Accepted=message.cases[i[j] as usize].result{
-                            message.score-=problem.cases[i[j] as usize-1].score;
+    if has_packing {
+        for i in &vec_packing {
+            match message.cases[i[i.len() - 1] as usize].result {
+                EnumResult::Skipped => {
+                    for j in 0..i.len() {
+                        if let EnumResult::Accepted = message.cases[i[j] as usize].result {
+                            message.score -= problem.cases[i[j] as usize - 1].score;
                         }
                     }
-                }_=>{}
+                }
+                _ => {}
             }
         }
     }
@@ -531,14 +548,14 @@ fn execute_input(mut message:Message,mut pool:web::Data<Pool<SqliteConnectionMan
                 is_accepted = false;
                 break;
             }
-            EnumResult::SPJError=>{
-                message.result=EnumResult::SPJError;
-                is_accepted=false;
+            EnumResult::SPJError => {
+                message.result = EnumResult::SPJError;
+                is_accepted = false;
                 break;
             }
-            EnumResult::TimeLimitExceeded=>{
-                message.result=EnumResult::TimeLimitExceeded;
-                is_accepted=false;
+            EnumResult::TimeLimitExceeded => {
+                message.result = EnumResult::TimeLimitExceeded;
+                is_accepted = false;
                 break;
             }
             _ => {}
@@ -600,8 +617,8 @@ async fn post_jobs(
             reason: ErrorReason::ErrNotFound,
             message: format!("Language {} not found.", body.language),
         });
-    } 
-      //check user id
+    }
+    //check user id
     pool = pool.clone();
     let conn: usize = pool
         .get()
@@ -620,61 +637,99 @@ async fn post_jobs(
         });
     }
     //check contest_id
-    let cnt:usize=pool.get().unwrap().query_row("SELECT count(*) FROM contests WHERE id=?1", params![body.contest_id],|row| row.get(0) ).unwrap();
-    println!("contest_id:{},count:{}",body.contest_id,cnt);
-    if cnt==0{
-        return HttpResponse::NotFound().json(ErrorMessage{code:3,reason:ErrorReason::ErrNotFound,message:format!("Contest {} not found.",body.contest_id)});
+    let cnt: usize = pool
+        .get()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM contests WHERE id=?1",
+            params![body.contest_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    println!("contest_id:{},count:{}", body.contest_id, cnt);
+    if cnt == 0 {
+        return HttpResponse::NotFound().json(ErrorMessage {
+            code: 3,
+            reason: ErrorReason::ErrNotFound,
+            message: format!("Contest {} not found.", body.contest_id),
+        });
     }
     //create contest element
-    let mut conn=pool.get().unwrap();
-    let mut t=conn.prepare("SELECT * FROM contests WHERE id=?1").unwrap();
-    let contests_iter=t.query_map(params![body.contest_id], |row|{
-        Ok(Contest{
-            id:row.get(0)?,
-            name:row.get(1)?,
-            from:row.get(2)?,
-            to:row.get(3)?,
-            problem_ids:{
-                let t:String=row.get(4)?;
-                let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
-                ids
-            },
-            user_ids:{
-                let t:String=row.get(5)?;
-                let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
-                ids
-            },
-            submission_limit:row.get(6)?,
+    let mut conn = pool.get().unwrap();
+    let mut t = conn.prepare("SELECT * FROM contests WHERE id=?1").unwrap();
+    let contests_iter = t
+        .query_map(params![body.contest_id], |row| {
+            Ok(Contest {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                from: row.get(2)?,
+                to: row.get(3)?,
+                problem_ids: {
+                    let t: String = row.get(4)?;
+                    let ids: Vec<i32> = serde_json::from_str(&t).unwrap();
+                    ids
+                },
+                user_ids: {
+                    let t: String = row.get(5)?;
+                    let ids: Vec<i32> = serde_json::from_str(&t).unwrap();
+                    ids
+                },
+                submission_limit: row.get(6)?,
+            })
         })
-    }).unwrap();
-    let mut vec_contest=Vec::new();
-    for i in contests_iter{
+        .unwrap();
+    let mut vec_contest = Vec::new();
+    for i in contests_iter {
         vec_contest.push(i.unwrap());
-    }//check if user_id is in contest user_ids
-    if !vec_contest[0].user_ids.contains(&body.user_id){
-        return HttpResponse::NotFound().json(ErrorMessage{
-            code:3,reason:ErrorReason::ErrNotFound,message:format!("user_id {} not found in contest.",body.user_id),
+    } //check if user_id is in contest user_ids
+    if (!vec_contest[0].user_ids.contains(&body.user_id)) && (body.contest_id != 0) {
+        return HttpResponse::NotFound().json(ErrorMessage {
+            code: 3,
+            reason: ErrorReason::ErrNotFound,
+            message: format!("user_id {} not found in contest.", body.user_id),
         });
     }
     //check if problem_id is in contest problem_ids
-    if !vec_contest[0].problem_ids.contains(&body.problem_id){
-        return HttpResponse::NotFound().json(ErrorMessage{
-            code:3,reason:ErrorReason::ErrNotFound,message:format!("problem_id {} not found in contest.",body.problem_id),
+    if !vec_contest[0].problem_ids.contains(&body.problem_id) && (body.contest_id != 0) {
+        return HttpResponse::NotFound().json(ErrorMessage {
+            code: 3,
+            reason: ErrorReason::ErrNotFound,
+            message: format!("problem_id {} not found in contest.", body.problem_id),
         });
     }
     //check if in the allowed time
-    let contest_from=Utc.datetime_from_str(&vec_contest[0].from, "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap();
-    let contest_to=Utc.datetime_from_str(&vec_contest[0].to, "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap();
-    if (Utc::now()>contest_to)||(Utc::now()<contest_from){
-        return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"submit time invalid".to_string()});
-    }//check if in submit times
-    let cnt:usize=pool.get().unwrap().query_row("SELECT count(*) FROM task WHERE user_id=?1 AND contest_id=?2", params![body.user_id,body.contest_id],|row| row.get(0) ).unwrap();
-    if (cnt as i32)>=vec_contest[0].submission_limit{
-        return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrRateLimit,message:"exceed submission limit".to_string()});
+    let contest_from = Utc
+        .datetime_from_str(&vec_contest[0].from, "%Y-%m-%dT%H:%M:%S%.3fZ")
+        .unwrap();
+    let contest_to = Utc
+        .datetime_from_str(&vec_contest[0].to, "%Y-%m-%dT%H:%M:%S%.3fZ")
+        .unwrap();
+    if (Utc::now() > contest_to) || (Utc::now() < contest_from) {
+        return HttpResponse::BadRequest().json(ErrorMessage {
+            code: 1,
+            reason: ErrorReason::ErrInvalidArgument,
+            message: "submit time invalid".to_string(),
+        });
+    } //check if in submit times
+    let cnt: usize = pool
+        .get()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM task WHERE user_id=?1 AND contest_id=?2",
+            params![body.user_id, body.contest_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    if (cnt as i32) >= vec_contest[0].submission_limit {
+        return HttpResponse::BadRequest().json(ErrorMessage {
+            code: 1,
+            reason: ErrorReason::ErrRateLimit,
+            message: "exceed submission limit".to_string(),
+        });
     }
     //create temporary directory
     let mut vec_cases = Vec::new();
-    for i in 0..config.problems[problem_index].cases.len()+1 {
+    for i in 0..config.problems[problem_index].cases.len() + 1 {
         vec_cases.push(CaseResult {
             id: i as i32,
             result: EnumResult::Waiting,
@@ -716,7 +771,7 @@ async fn post_jobs(
         score: 0.0,
         cases: vec_cases,
     };
-    let return_message=message.clone();
+    let return_message = message.clone();
     //insert entry in task table
     pool = pool.clone();
     let mut conn = pool.get().unwrap().execute(
@@ -737,11 +792,14 @@ async fn post_jobs(
         ),
     );
     //execute program
-    let language=config.languages[language_index].clone();
-    let problem=config.problems[problem_index].clone();    
-    let detached=spawn(
-        async{ block(move | |{execute_input(message, pool.clone(), problem, language);}).await;}
- );
+    let language = config.languages[language_index].clone();
+    let problem = config.problems[problem_index].clone();
+    let detached = spawn(async {
+        block(move || {
+            execute_input(message, pool.clone(), problem, language);
+        })
+        .await;
+    });
     return HttpResponse::Ok().json(return_message);
 }
 #[get("/jobs")]
@@ -806,24 +864,28 @@ async fn get_jobs(
         if query_str.len() > 1 {
             query_str.push_str(" AND ");
         }
-        query_str.push_str(&format!("language={}", s));
+        query_str.push_str(&format!("language='{}'", s));
     }
     if let Some(s) = &info.state {
         if query_str.len() > 1 {
             query_str.push_str(" AND ");
         }
-        query_str.push_str(&format!("state={}", s.to_string()));
+        query_str.push_str(&format!("state='{}'", s.to_string()));
     }
     if let Some(s) = &info.result {
         if query_str.len() > 1 {
             query_str.push_str(" AND ");
         }
-        query_str.push_str(&format!("result={}", s.to_string()));
+        query_str.push_str(&format!("result='{}'", s.to_string()));
     }
     if query_str.len() > 1 {
-        let mut query_str = " WHERE ".to_string().push_str(&query_str);
+        let mut t = " WHERE ".to_string();
+        t.push_str(&query_str);
+        query_str = t;
     }
     pool = pool.clone();
+    println!("uery_str:{}", &query_str);
+    println!("{}", format!("SELECT * FROM task{}", &query_str));
     let mut conn = pool.get().unwrap();
     let mut t = conn
         .prepare(&format!("SELECT * FROM task{}", query_str))
@@ -908,9 +970,7 @@ async fn gets_job_id(
 ) -> impl Responder {
     pool = pool.clone();
     let mut conn = pool.get().unwrap();
-    let mut t = conn
-        .prepare("SELECT * FROM task WHERE id=?1")
-        .unwrap();
+    let mut t = conn.prepare("SELECT * FROM task WHERE id=?1").unwrap();
     let tasks_iter = t
         .query_map([*id], |row| {
             Ok(Message {
@@ -976,7 +1036,7 @@ async fn put_jobs(
                 score: row.get(10)?,
                 cases: {
                     let mut t: String = row.get(11)?;
-                    let mut vec_cases:Vec<CaseResult>=serde_json::from_str(&t).unwrap();
+                    let mut vec_cases: Vec<CaseResult> = serde_json::from_str(&t).unwrap();
                     vec_cases
                 },
             })
@@ -1009,20 +1069,23 @@ async fn put_jobs(
         }
         language_index += 1;
     }
-    let language=config.languages[language_index as usize].clone();
-    let mut problem=config.problems[0].clone();
-    for i in &config.problems{
-        if i.id==message.submission.problem_id{
-            problem=i.clone();
+    let language = config.languages[language_index as usize].clone();
+    let mut problem = config.problems[0].clone();
+    for i in &config.problems {
+        if i.id == message.submission.problem_id {
+            problem = i.clone();
         }
     }
-    let message_return=message.clone();
-    let detached=spawn(
-        async{ block(move | |{execute_input(message, pool.clone(), problem, language);}).await;}
- );
+    let message_return = message.clone();
+    let detached = spawn(async {
+        block(move || {
+            execute_input(message, pool.clone(), problem, language);
+        })
+        .await;
+    });
     return HttpResponse::Ok().json(message_return);
 }
-#[derive(Serialize, Deserialize, Debug,Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct User {
     id: i32,
     name: String,
@@ -1034,7 +1097,7 @@ struct InputUser {
 }
 #[post("/users")]
 async fn post_users(
-    user: web::Path<InputUser>,
+    user: web::Json<InputUser>,
     mut pool: web::Data<Pool<SqliteConnectionManager>>,
 ) -> impl Responder {
     pool = pool.clone();
@@ -1093,7 +1156,9 @@ async fn post_users(
                 .unwrap()
                 .query_row("SELECT max(id) FROM users", [], |row| row.get(0))
                 .unwrap();
-            let user_id = conn + 1;
+            println!("conn_for user_id max:{}", conn);
+            user_id = conn + 1;
+            println!("user_id:{}", user_id);
             pool = pool.clone();
             pool.get().unwrap().execute(
                 "INSERT INTO users (id,name) VALUES (?1,?2)",
@@ -1127,16 +1192,17 @@ async fn get_users(mut pool: web::Data<Pool<SqliteConnectionManager>>) -> impl R
     HttpResponse::Ok().json(user_vec)
 }
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all="snake_case")]
 enum ScoringRule {
     Latest,
     Highest,
 }
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 struct ScoringRuleStandard {
     submit_time: Option<DateTime<Utc>>,
     score: f64,
 }
-#[derive(Serialize, Deserialize, Debug,Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
 enum TieBreaker {
     SubmissionTime,
@@ -1148,7 +1214,7 @@ struct RankRule {
     scoring_rule: Option<ScoringRule>,
     tie_breaker: Option<TieBreaker>,
 }
-
+#[derive(Debug)]
 struct RanklistEntry {
     user: User,
     rank: i32,
@@ -1184,7 +1250,7 @@ fn sort_by_standard(
                     .get()
                     .unwrap()
                     .query_row(
-                        "SELECT count(*) FROM tasks WHERE user_id=?1",
+                        "SELECT count(*) FROM task WHERE user_id=?1",
                         params![a.user.id],
                         |row| row.get(0),
                     )
@@ -1193,7 +1259,7 @@ fn sort_by_standard(
                     .get()
                     .unwrap()
                     .query_row(
-                        "SELECT count(*) FROM tasks WHERE user_id=?1",
+                        "SELECT count(*) FROM task WHERE user_id=?1",
                         params![b.user.id],
                         |row| row.get(0),
                     )
@@ -1206,46 +1272,58 @@ fn sort_by_standard(
                 } else {
                     return conna.cmp(&connb);
                 }
-            }TieBreaker::UserId=>{
-                if a.final_score>b.final_score{
+            }
+            TieBreaker::UserId => {
+                if a.final_score > b.final_score {
                     return Ordering::Less;
-                }if a.final_score<b.final_score{
+                }
+                if a.final_score < b.final_score {
                     return Ordering::Greater;
-                }else{
+                } else {
                     return a.user.id.cmp(&b.user.id);
                 }
-            }TieBreaker::SubmissionTime=>{
-                if a.final_score>b.final_score{
+            }
+            TieBreaker::SubmissionTime => {
+                if a.final_score > b.final_score {
                     return Ordering::Less;
-                }if a.final_score<b.final_score{
+                }
+                if a.final_score < b.final_score {
                     return Ordering::Greater;
-                }else{
-                    let mut submit_time_a:DateTime<Utc>=Utc.datetime_from_str("4022-08-27T02:05:29.000Z","%Y-%m-%dT%H:%M:%S%.3fZ").unwrap();
-                    let mut submit_time_b:DateTime<Utc>=submit_time_a.clone();
-                    for i in &a.scores{
-                        match i.submit_time{
-                            Some(t)=>{
-                                if t<submit_time_a{
-                                    submit_time_a=t.clone();
+                } else {
+                    let mut submit_time_a: DateTime<Utc> = Utc
+                        .datetime_from_str("4022-08-27T02:05:29.000Z", "%Y-%m-%dT%H:%M:%S%.3fZ")
+                        .unwrap();
+                    let mut submit_time_b: DateTime<Utc> = submit_time_a.clone();
+                    for i in &a.scores {
+                        match i.submit_time {
+                            Some(t) => {
+                                if t < submit_time_a {
+                                    submit_time_a = t.clone();
                                 }
-                            }None=>{}
+                            }
+                            None => {}
                         }
-                    }for i in &b.scores{
-                        match i.submit_time{
-                            Some(t)=>{
-                                if t<submit_time_b{
-                                    submit_time_b=t.clone();
+                    }
+                    for i in &b.scores {
+                        match i.submit_time {
+                            Some(t) => {
+                                if t < submit_time_b {
+                                    submit_time_b = t.clone();
                                 }
-                            }None=>{}
+                            }
+                            None => {}
                         }
-                    }if submit_time_a<submit_time_b{
+                    }
+                    if submit_time_a < submit_time_b {
                         return Ordering::Less;
-                    }else if submit_time_a>submit_time_b{
+                    } else if submit_time_a > submit_time_b {
                         return Ordering::Greater;
-                    }else {return Ordering::Equal;}
+                    } else {
+                        return Ordering::Equal;
+                    }
                 }
             }
-        }
+        },
     }
 }
 #[get("/contests/{contestid}/ranklist")]
@@ -1258,58 +1336,74 @@ async fn get_contest_ranklist(
     let mut vec_ranklist: Vec<RanklistEntry> = Vec::new();
     let mut vec_problem_id = Vec::new();
     //check if valid contest_id
-    if contestid!=0.into(){
-        let id=*contestid;
-        let cnt:usize=pool.get().unwrap().query_row("SELECT count(*) FROM contests WHERE id=?1", params![id],|row| row.get(0) ).unwrap();
-        if cnt==0{
-            return HttpResponse::NotFound().json(ErrorMessage{code:3,reason:ErrorReason::ErrNotFound,message:format!("Contest {} not found.",id)});
-        }
-    //get contest info from table
-    let mut conn=pool.get().unwrap();
-    let mut t=conn.prepare("SELECT * FROM contests WHERE id=?1").unwrap();
-    let contests_iter=t.query_map(params![*contestid], |row|{
-        Ok(Contest{
-            id:row.get(0)?,
-            name:row.get(1)?,
-            from:row.get(2)?,
-            to:row.get(3)?,
-            problem_ids:{
-                let t:String=row.get(4)?;
-                let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
-                ids
-            },
-            user_ids:{
-                let t:String=row.get(5)?;
-                let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
-                ids
-            },
-            submission_limit:row.get(6)?,
-        })
-    }).unwrap();
-    let mut v=Vec::new();
-    for i in contests_iter{
-        v.push(i.unwrap());
-    }vec_problem_id=v[0].problem_ids.clone();
-    for i in &v[0].user_ids{
-        let c1 = pool.get().unwrap();
-        let mut conn = c1.prepare("SELECT * FROM users WHERE id=?1").unwrap();
-        let users_iter = conn
-            .query_map([*i], |row| {
-                Ok(User {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                })
-            }).unwrap();
-        for i in users_iter {
-            vec_ranklist.push(RanklistEntry {
-                user: i.unwrap(),
-                rank: 0,
-                final_score: 0.0,
-                scores: Vec::new(),
+    if contestid != 0.into() {
+        let id = *contestid;
+        let cnt: usize = pool
+            .get()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM contests WHERE id=?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if cnt == 0 {
+            return HttpResponse::NotFound().json(ErrorMessage {
+                code: 3,
+                reason: ErrorReason::ErrNotFound,
+                message: format!("Contest {} not found.", id),
             });
         }
-    }
-}else {
+        //get contest info from table
+        let mut conn = pool.get().unwrap();
+        let mut t = conn.prepare("SELECT * FROM contests WHERE id=?1").unwrap();
+        let contests_iter = t
+            .query_map(params![*contestid], |row| {
+                Ok(Contest {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    from: row.get(2)?,
+                    to: row.get(3)?,
+                    problem_ids: {
+                        let t: String = row.get(4)?;
+                        let ids: Vec<i32> = serde_json::from_str(&t).unwrap();
+                        ids
+                    },
+                    user_ids: {
+                        let t: String = row.get(5)?;
+                        let ids: Vec<i32> = serde_json::from_str(&t).unwrap();
+                        ids
+                    },
+                    submission_limit: row.get(6)?,
+                })
+            })
+            .unwrap();
+        let mut v = Vec::new();
+        for i in contests_iter {
+            v.push(i.unwrap());
+        }
+        vec_problem_id = v[0].problem_ids.clone();
+        for i in &v[0].user_ids {
+            let c1 = pool.get().unwrap();
+            let mut conn = c1.prepare("SELECT * FROM users WHERE id=?1").unwrap();
+            let users_iter = conn
+                .query_map([*i], |row| {
+                    Ok(User {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                    })
+                })
+                .unwrap();
+            for i in users_iter {
+                vec_ranklist.push(RanklistEntry {
+                    user: i.unwrap(),
+                    rank: 0,
+                    final_score: 0.0,
+                    scores: Vec::new(),
+                });
+            }
+        }
+    } else {
         //create ranklist vector,get all the users
         pool = pool.clone();
         let c1 = pool.get().unwrap();
@@ -1330,74 +1424,55 @@ async fn get_contest_ranklist(
                 scores: Vec::new(),
             });
         }
-        //for every user,iterate all problems        
+        println!("vec_ranklist's length:{}", vec_ranklist.len());
+        //get all problems's id
         for i in &config.problems {
             vec_problem_id.push(i.id);
         }
     }
-        vec_problem_id.sort();
-        for user in &mut vec_ranklist {
-            for prob_id in &vec_problem_id {
-                let c1 = pool.get().unwrap();
-                let mut conn = c1
-                    .prepare(
-                        "SELECT created_time,score FROM task WHERE user_id=?1 AND problem_id=?2",
-                    )
-                    .unwrap();
-                let standard_iter = conn
-                    .query_map([user.user.id, *prob_id], |row| {
-                        let s: String = row.get(0)?;
-                        Ok(ScoringRuleStandard {
-                            submit_time: Some(
-                                Utc.datetime_from_str(&s, "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap(),
-                            ),
-                            score: row.get(1)?,
-                        })
+    vec_problem_id.sort();
+    for user in &mut vec_ranklist {
+        for prob_id in &vec_problem_id {
+            let c1 = pool.get().unwrap();
+            let mut conn = c1
+                .prepare("SELECT created_time,score FROM task WHERE user_id=?1 AND problem_id=?2")
+                .unwrap();
+            let standard_iter = conn
+                .query_map([user.user.id, *prob_id], |row| {
+                    let s: String = row.get(0)?;
+                    Ok(ScoringRuleStandard {
+                        submit_time: Some(
+                            Utc.datetime_from_str(&s, "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap(),
+                        ),
+                        score: row.get(1)?,
                     })
-                    .unwrap();
-                let mut vec_submit = Vec::new();
-                for i in standard_iter {
-                    vec_submit.push(i.unwrap());
-                }
-                if vec_submit.len() == 0 {
-                    user.scores.push(ScoringRuleStandard {
-                        submit_time: None,
-                        score: (0.0),
-                    });
-                } else {
-                    match rank_rule.scoring_rule {
-                        Some(ScoringRule::Highest) => {
-                            vec_submit.sort_by(|a, b| {
-                                if a.score > b.score {
-                                    std::cmp::Ordering::Less
-                                } else if a.score == b.score {
-                                    if let Some(atime) = a.submit_time {
-                                        if let Some(btime) = b.submit_time {
-                                            if atime < btime {
-                                                Ordering::Less
-                                            } else {
-                                                Ordering::Greater
-                                            }
-                                        } else {
-                                            Ordering::Less
-                                        }
-                                    } else {
-                                        Ordering::Less
-                                    }
-                                } else {
-                                    Ordering::Greater
-                                }
-                            });
-                            user.scores.push(vec_submit[0].clone());
-                        }
-                        _ => {
-                            vec_submit.sort_by(|a, b| {
+                })
+                .unwrap();
+            let mut vec_submit = Vec::new();
+            for i in standard_iter {
+                vec_submit.push(i.unwrap());
+            }
+            //if no submission found for that user and the problem
+            if vec_submit.len() == 0 {
+                println!("push when length is zero");
+                user.scores.push(ScoringRuleStandard {
+                    submit_time: None,
+                    score: (0.0),
+                });
+            } else {
+                //get the qualified one for the user and the problem
+                match rank_rule.scoring_rule {
+                    Some(ScoringRule::Highest) => {
+                        vec_submit.sort_by(|a, b| {
+                            if a.score > b.score {
+                                std::cmp::Ordering::Less
+                            } else if a.score == b.score {
                                 if let Some(atime) = a.submit_time {
                                     if let Some(btime) = b.submit_time {
                                         if atime < btime {
-                                            Ordering::Greater
-                                        } else {
                                             Ordering::Less
+                                        } else {
+                                            Ordering::Greater
                                         }
                                     } else {
                                         Ordering::Less
@@ -1405,272 +1480,434 @@ async fn get_contest_ranklist(
                                 } else {
                                     Ordering::Less
                                 }
-                            });
-                            user.scores.push(vec_submit[0].clone());
-                        }
+                            } else {
+                                Ordering::Greater
+                            }
+                        });
+                        user.scores.push(vec_submit[0].clone());
+                    }
+                    _ => {
+                        vec_submit.sort_by(|a, b| {
+                            if let Some(atime) = a.submit_time {
+                                if let Some(btime) = b.submit_time {
+                                    if atime < btime {
+                                        Ordering::Greater
+                                    } else {
+                                        Ordering::Less
+                                    }
+                                } else {
+                                    Ordering::Less
+                                }
+                            } else {
+                                Ordering::Less
+                            }
+                        });
+                        user.scores.push(vec_submit[0].clone());
                     }
                 }
-            } //update final score
-            for i in &user.scores {
-                user.final_score += i.score;
             }
+        } 
+        //update final score
+        for i in &user.scores {
+            user.final_score += i.score;
         }
-        //sort vec_ranklist
-        vec_ranklist.sort_by(|a,b|{
-            match sort_by_standard(a, b, rank_rule.tie_breaker.clone(), pool.clone()){
-                Ordering::Greater=>{Ordering::Greater}
-                Ordering::Less=>{Ordering::Less}
-                Ordering::Equal=>{a.user.id.cmp(&b.user.id)}
-            }
-        });
-        //generate return list
-        let mut vec_return=Vec::new();
-        for i in 0..vec_ranklist.len(){
-            if i==0{
-                vec_return.push(RanklistReturn{
-                    user:vec_ranklist[i].user.clone(),
-                    rank:1,
-                    scores:{
-                        let mut vec_scores=Vec::new();
-                        for it in &vec_ranklist[i].scores{
-                            vec_scores.push(it.score);
-                        }vec_scores
-                    }
-                });
-            }else{
-                let mut rank=0;
-                match sort_by_standard(&vec_ranklist[i-1], &vec_ranklist[i],rank_rule.tie_breaker.clone(), pool.clone()){
-                    Ordering::Equal=>{
-                        rank=vec_return[i-1].rank;
-                    }_=>{
-                        rank=vec_return[i-1].rank+1;
-                    }
-                }vec_return.push(RanklistReturn{
-                    user:vec_ranklist[i].user.clone(),
-                    rank:rank,
-                    scores:{
-                        let mut vec_scores=Vec::new();
-                        for it in &vec_ranklist[i].scores{
-                            vec_scores.push(it.score);
-                        }vec_scores
-                    }
-                });
-            }
-        return HttpResponse::Ok().json(vec_return);
     }
-    HttpResponse::Ok().json({})
+    //sort vec_ranklist
+    println!("{:?}",vec_ranklist);
+    println!("before sort vec_ranklist_len{}", vec_ranklist.len());
+    vec_ranklist.sort_by(|a, b| {
+        match sort_by_standard(a, b, rank_rule.tie_breaker.clone(), pool.clone()) {
+            Ordering::Greater => Ordering::Greater,
+            Ordering::Less => Ordering::Less,
+            Ordering::Equal => a.user.id.cmp(&b.user.id),
+        }
+    });
+    println!("after sort:{:?}",vec_ranklist);
+    //generate return list
+    let mut vec_return = Vec::new();
+    for i in 0..vec_ranklist.len() {
+        if i == 0 {
+            vec_return.push(RanklistReturn {
+                user: vec_ranklist[i].user.clone(),
+                rank: 1,
+                scores: {
+                    let mut vec_scores = Vec::new();
+                    for it in &vec_ranklist[i].scores {
+                        vec_scores.push(it.score);
+                    }
+                    vec_scores
+                },
+            });
+        } else {
+            let mut rank = 0;
+            match sort_by_standard(
+                &vec_ranklist[i - 1],
+                &vec_ranklist[i],
+                rank_rule.tie_breaker.clone(),
+                pool.clone(),
+            ) {
+                Ordering::Equal => {
+                    rank = vec_return[i - 1].rank;
+                }
+                _ => {
+                    rank = (i+1) as i32;
+                }
+            }
+            vec_return.push(RanklistReturn {
+                user: vec_ranklist[i].user.clone(),
+                rank: rank,
+                scores: {
+                    let mut vec_scores = Vec::new();
+                    for it in &vec_ranklist[i].scores {
+                        vec_scores.push(it.score);
+                    }
+                    vec_scores
+                },
+            });
+        }println!("vec_ret len:{}",vec_return.len());        
+    }return HttpResponse::Ok().json(vec_return);
 }
-#[derive(Serialize,Deserialize)]
-struct ContestInput{
-    id:Option<i32>,
-    name:String,
-    from:String,
-    to:String,
-    problem_ids:Vec<i32>,
-    user_ids:Vec<i32>,
-    submission_limit:i32,
+#[derive(Serialize, Deserialize)]
+struct ContestInput {
+    id: Option<i32>,
+    name: String,
+    from: String,
+    to: String,
+    problem_ids: Vec<i32>,
+    user_ids: Vec<i32>,
+    submission_limit: i32,
 }
-#[derive(Serialize,Deserialize)]
-struct Contest{
-    id:i32,
-    name:String,
-    from:String,
-    to:String,
-    problem_ids:Vec<i32>,
-    user_ids:Vec<i32>,
-    submission_limit:i32,
+#[derive(Serialize, Deserialize)]
+struct Contest {
+    id: i32,
+    name: String,
+    from: String,
+    to: String,
+    problem_ids: Vec<i32>,
+    user_ids: Vec<i32>,
+    submission_limit: i32,
 }
 #[post("/contests")]
-async fn post_contest(contest: web::Json<ContestInput>,
-config: web::Data<Configure>,
-mut pool: web::Data<Pool<SqliteConnectionManager>>,
-) -> impl Responder{
+async fn post_contest(
+    contest: web::Json<ContestInput>,
+    config: web::Data<Configure>,
+    mut pool: web::Data<Pool<SqliteConnectionManager>>,
+) -> impl Responder {
     //check id exists
-    let mut id=0;
-    match contest.id{
-        None=>{
-            let cnt:usize=pool.get().unwrap().query_row("SELECT count(*) FROM contests", params![],|row| row.get(0) ).unwrap();
-            if cnt==0{
-                id=1;
-            }else{
+    let mut id = 0;
+    match contest.id {
+        None => {
+            let cnt: usize = pool
+                .get()
+                .unwrap()
+                .query_row("SELECT count(*) FROM contests", params![], |row| row.get(0))
+                .unwrap();
+            if cnt == 0 {
+                id = 1;
+            } else {
+                let conn: usize = pool
+                    .get()
+                    .unwrap()
+                    .query_row("SELECT max(id) FROM contests", [], |row| row.get(0))
+                    .unwrap();
+                id = conn + 1;
+            }
+        }
+        Some(i) => {
+            if i == 0 {
+                return HttpResponse::BadRequest().json(ErrorMessage {
+                    code: 1,
+                    reason: ErrorReason::ErrInvalidArgument,
+                    message: "Invalid contest id".to_string(),
+                });
+            }
             let conn: usize = pool
-        .get()
-        .unwrap()
-        .query_row("SELECT max(id) FROM contests", [], |row| row.get(0))
-        .unwrap();
-        id=conn+1;}
-        }Some(i)=>{
-            if i==0{
-                return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid contest id".to_string()});
+                .get()
+                .unwrap()
+                .query_row(
+                    "SELECT count(*) FROM contests WHERE id=?1",
+                    params![i],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            if conn == 0 {
+                return HttpResponse::NotFound().json(ErrorMessage {
+                    code: 3,
+                    reason: ErrorReason::ErrNotFound,
+                    message: format!("Contest {} not found.", i),
+                });
             }
-            let conn:usize=pool.get().unwrap().query_row("SELECT count(*) FROM contests WHERE id=?1", params![i],|row| row.get(0) ).unwrap();
-            if conn==0{
-                return HttpResponse::NotFound().json(ErrorMessage{code:3,reason:ErrorReason::ErrNotFound,message:format!("Contest {} not found.",i)});
-            }
-        }        
-    }//check if invalid
-    //check if valid from and to time
-    let from_time=Utc.datetime_from_str(&contest.from, "%Y-%m-%dT%H:%M:%S%.3fZ");
-    if let Err(r)=from_time{
-        return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid argument from".to_string()});
+        }
+    } //check if invalid
+      //check if valid from and to time
+    let from_time = Utc.datetime_from_str(&contest.from, "%Y-%m-%dT%H:%M:%S%.3fZ");
+    if let Err(r) = from_time {
+        return HttpResponse::BadRequest().json(ErrorMessage {
+            code: 1,
+            reason: ErrorReason::ErrInvalidArgument,
+            message: "Invalid argument from".to_string(),
+        });
     }
-    let to_time=Utc.datetime_from_str(&contest.to, "%Y-%m-%dT%H:%M:%S%.3fZ");
-    if let Err(r)=to_time{
-        return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid argument to".to_string()});
+    let to_time = Utc.datetime_from_str(&contest.to, "%Y-%m-%dT%H:%M:%S%.3fZ");
+    if let Err(r) = to_time {
+        return HttpResponse::BadRequest().json(ErrorMessage {
+            code: 1,
+            reason: ErrorReason::ErrInvalidArgument,
+            message: "Invalid argument to".to_string(),
+        });
     }
     //check valid user_id
     //check if redundant user_id
-    if contest.user_ids.len()>1{
-        for i in 1..contest.user_ids.len(){
-            for j in 0..i{
-                if contest.user_ids[i]==contest.user_ids[j]{
-                    return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid argument user_ids".to_string()});
+    if contest.user_ids.len() > 1 {
+        for i in 1..contest.user_ids.len() {
+            for j in 0..i {
+                if contest.user_ids[i] == contest.user_ids[j] {
+                    return HttpResponse::BadRequest().json(ErrorMessage {
+                        code: 1,
+                        reason: ErrorReason::ErrInvalidArgument,
+                        message: "Invalid argument user_ids".to_string(),
+                    });
                 }
             }
         }
-    }//check if exists user_id
-    for i in &contest.user_ids{
-        pool=pool.clone();
-        let t:usize=pool.get().unwrap().query_row("SELECT count(*) FROM users WHERE id=?1", params![*i], |row| row.get(0)).unwrap();
-        if *i==0{
-            return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid argument user_ids".to_string()});
+    } //check if exists user_id
+    for i in &contest.user_ids {
+        pool = pool.clone();
+        let t: usize = pool
+            .get()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM users WHERE id=?1",
+                params![*i],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if *i == 0 {
+            return HttpResponse::BadRequest().json(ErrorMessage {
+                code: 1,
+                reason: ErrorReason::ErrInvalidArgument,
+                message: "Invalid argument user_ids".to_string(),
+            });
         }
-        if t==0{
-            return HttpResponse::NotFound().json(ErrorMessage{code:3,reason:ErrorReason::ErrNotFound,message:format!("user_id {} not found.",i)});
+        if t == 0 {
+            return HttpResponse::NotFound().json(ErrorMessage {
+                code: 3,
+                reason: ErrorReason::ErrNotFound,
+                message: format!("user_id {} not found.", i),
+            });
         }
-    }//check if redundant problem_id
-    if contest.problem_ids.len()>1{
-        for i in 1..contest.problem_ids.len(){
-            for j in 0..i{
-                if contest.problem_ids[i]==contest.problem_ids[j]{
-                    return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid argument user_ids".to_string()});
+    } //check if redundant problem_id
+    if contest.problem_ids.len() > 1 {
+        for i in 1..contest.problem_ids.len() {
+            for j in 0..i {
+                if contest.problem_ids[i] == contest.problem_ids[j] {
+                    return HttpResponse::BadRequest().json(ErrorMessage {
+                        code: 1,
+                        reason: ErrorReason::ErrInvalidArgument,
+                        message: "Invalid argument user_ids".to_string(),
+                    });
                 }
             }
         }
-    }//check if exists problem_id
-    let mut all_problemid_vec=Vec::new();
-    for i in &config.problems{
+    } //check if exists problem_id
+    let mut all_problemid_vec = Vec::new();
+    for i in &config.problems {
         all_problemid_vec.push(i.id);
-    }for i in &contest.problem_ids{
-        if *i==0{
-            return HttpResponse::BadRequest().json(ErrorMessage{code:1,reason:ErrorReason::ErrInvalidArgument,message:"Invalid argument problem_ids".to_string()});
+    }
+    for i in &contest.problem_ids {
+        if *i == 0 {
+            return HttpResponse::BadRequest().json(ErrorMessage {
+                code: 1,
+                reason: ErrorReason::ErrInvalidArgument,
+                message: "Invalid argument problem_ids".to_string(),
+            });
         }
-        let mut is_find=false;
-        for j in &all_problemid_vec{
-            if i==j{
-                is_find=true;
+        let mut is_find = false;
+        for j in &all_problemid_vec {
+            if i == j {
+                is_find = true;
                 break;
             }
-        }if !is_find{
-            return HttpResponse::NotFound().json(ErrorMessage{code:3,reason:ErrorReason::ErrNotFound,message:format!("problem_id {} not found.",i)});
+        }
+        if !is_find {
+            return HttpResponse::NotFound().json(ErrorMessage {
+                code: 3,
+                reason: ErrorReason::ErrNotFound,
+                message: format!("problem_id {} not found.", i),
+            });
         }
     }
     //new Contest and insert in table/update
-    let contest_new=Contest{
-        id:id as i32,
-        name:contest.name.clone(),
-        from:contest.from.clone(),
-        to:contest.to.clone(),
-        problem_ids:contest.problem_ids.clone(),
-        user_ids:contest.user_ids.clone(),
-        submission_limit:contest.submission_limit,
+    let contest_new = Contest {
+        id: id as i32,
+        name: contest.name.clone(),
+        from: contest.from.clone(),
+        to: contest.to.clone(),
+        problem_ids: contest.problem_ids.clone(),
+        user_ids: contest.user_ids.clone(),
+        submission_limit: contest.submission_limit,
     };
     //update/new in table
-    match contest.id{
-        Some(i)=>{
+    match contest.id {
+        Some(i) => {
             pool.get().unwrap().execute("UPDATE contests SET name=?1,from_time=?2,to_time=?3,problem_ids=?4,user_ids=?5,submission_limit=?6 WHERE id=?7", params![contest_new.name.clone(),contest_new.from.clone(),contest_new.to.clone(),serde_json::to_string(&contest_new.problem_ids).unwrap(),serde_json::to_string(&contest_new.user_ids).unwrap(),contest_new.submission_limit,id]).unwrap();
-        }None=>{
-            pool.get().unwrap().execute("INSERT INTO contests VALUES (?1,?2,?3,?4,?5,?6,?7)", (id,contest_new.name.clone(),contest_new.from.clone(),contest_new.to.clone(),serde_json::to_string(&contest_new.problem_ids).unwrap(),serde_json::to_string(&contest_new.user_ids).unwrap(),contest_new.submission_limit)).unwrap();
+        }
+        None => {
+            pool.get()
+                .unwrap()
+                .execute(
+                    "INSERT INTO contests VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                    (
+                        id,
+                        contest_new.name.clone(),
+                        contest_new.from.clone(),
+                        contest_new.to.clone(),
+                        serde_json::to_string(&contest_new.problem_ids).unwrap(),
+                        serde_json::to_string(&contest_new.user_ids).unwrap(),
+                        contest_new.submission_limit,
+                    ),
+                )
+                .unwrap();
         }
     }
     return HttpResponse::Ok().json(contest_new);
 }
 #[get("/contests")]
-async fn get_contests(config: web::Data<Configure>,
-    mut pool: web::Data<Pool<SqliteConnectionManager>>)->impl Responder{
-        let mut conn=pool.get().unwrap();
-        let mut t=conn.prepare("SELECT * FROM contests").unwrap();
-        let contests_iter=t.query_map([], |row|{
-            Ok(Contest{
-                id:row.get(0)?,
-                name:row.get(1)?,
-                from:row.get(2)?,
-                to:row.get(3)?,
-                problem_ids:{
-                    let t:String=row.get(4)?;
-                    let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
+async fn get_contests(
+    config: web::Data<Configure>,
+    mut pool: web::Data<Pool<SqliteConnectionManager>>,
+) -> impl Responder {
+    let mut conn = pool.get().unwrap();
+    let mut t = conn.prepare("SELECT * FROM contests").unwrap();
+    let contests_iter = t
+        .query_map([], |row| {
+            Ok(Contest {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                from: row.get(2)?,
+                to: row.get(3)?,
+                problem_ids: {
+                    let t: String = row.get(4)?;
+                    let ids: Vec<i32> = serde_json::from_str(&t).unwrap();
                     ids
                 },
-                user_ids:{
-                    let t:String=row.get(5)?;
-                    let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
+                user_ids: {
+                    let t: String = row.get(5)?;
+                    let ids: Vec<i32> = serde_json::from_str(&t).unwrap();
                     ids
                 },
-                submission_limit:row.get(6)?,
+                submission_limit: row.get(6)?,
             })
-        }).unwrap();
-        let mut vec_return=Vec::new();
-        for i in contests_iter{
-            let t=i.unwrap();
-            if t.id!=0{
-                vec_return.push(t);
-            }
-        }vec_return.sort_by(|a,b|{a.id.cmp(&b.id)});
-        return HttpResponse::Ok().json(vec_return);
-    }
-#[get("/contests/{id}")]
-async fn get_contest_id(id:web::Path<i32>, mut pool: web::Data<Pool<SqliteConnectionManager>>)->impl Responder{
-    pool=pool.clone();
-    let conn:usize=pool.get().unwrap().query_row("SELECT count(*) FROM users WHERE id=?1", params![*id], |row| row.get(0)).unwrap();
-    if conn==0{
-        return HttpResponse::NotFound().json(ErrorMessage{code:3,reason:ErrorReason::ErrNotFound,message:format!("Contest {} not found.",id)});
-    }let mut conn=pool.get().unwrap();
-    let mut t=conn.prepare("SELECT * FROM contests WHERE id=?1").unwrap();
-    let id_i32:i32=*id;
-    let contests_iter=t.query_map(params![id_i32], |row|{
-        Ok(Contest{
-            id:row.get(0)?,
-            name:row.get(1)?,
-            from:row.get(2)?,
-            to:row.get(3)?,
-            problem_ids:{
-                let t:String=row.get(4)?;
-                let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
-                ids
-            },
-            user_ids:{
-                let t:String=row.get(5)?;
-                let ids:Vec<i32>=serde_json::from_str(&t).unwrap();
-                ids
-            },
-            submission_limit:row.get(6)?,
         })
-    }).unwrap();
-    let mut v=Vec::new();
-    for i in contests_iter{
+        .unwrap();
+    let mut vec_return = Vec::new();
+    for i in contests_iter {
+        let t = i.unwrap();
+        if t.id != 0 {
+            vec_return.push(t);
+        }
+    }
+    vec_return.sort_by(|a, b| a.id.cmp(&b.id));
+    return HttpResponse::Ok().json(vec_return);
+}
+#[get("/contests/{id}")]
+async fn get_contest_id(
+    id: web::Path<i32>,
+    mut pool: web::Data<Pool<SqliteConnectionManager>>,
+) -> impl Responder {
+    pool = pool.clone();
+    let conn: usize = pool
+        .get()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM users WHERE id=?1",
+            params![*id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    if conn == 0 {
+        return HttpResponse::NotFound().json(ErrorMessage {
+            code: 3,
+            reason: ErrorReason::ErrNotFound,
+            message: format!("Contest {} not found.", id),
+        });
+    }
+    let mut conn = pool.get().unwrap();
+    let mut t = conn.prepare("SELECT * FROM contests WHERE id=?1").unwrap();
+    let id_i32: i32 = *id;
+    let contests_iter = t
+        .query_map(params![id_i32], |row| {
+            Ok(Contest {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                from: row.get(2)?,
+                to: row.get(3)?,
+                problem_ids: {
+                    let t: String = row.get(4)?;
+                    let ids: Vec<i32> = serde_json::from_str(&t).unwrap();
+                    ids
+                },
+                user_ids: {
+                    let t: String = row.get(5)?;
+                    let ids: Vec<i32> = serde_json::from_str(&t).unwrap();
+                    ids
+                },
+                submission_limit: row.get(6)?,
+            })
+        })
+        .unwrap();
+    let mut v = Vec::new();
+    for i in contests_iter {
         v.push(i.unwrap());
     }
     return HttpResponse::Ok().json(v.pop().unwrap());
 }
-fn create_contest0(config:&Configure,pool:Pool<SqliteConnectionManager>){
-    let conn:usize=pool.get().unwrap().query_row("SELECT count(*) FROM contests WHERE id=0", [], |row| row.get(0))
-    .unwrap();
-    let mut users:Vec<i32>=Vec::new();
-    let mut problems=Vec::new();
-    for i in &config.problems{
+fn create_contest0(config: &Configure, pool: Pool<SqliteConnectionManager>) {
+    let conn: usize = pool
+        .get()
+        .unwrap()
+        .query_row("SELECT count(*) FROM contests WHERE id=0", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let mut users: Vec<i32> = Vec::new();
+    let mut problems = Vec::new();
+    for i in &config.problems {
         problems.push(i.id);
-    }let mut pool_binding=pool.get().unwrap();
-    let mut users_prepare=pool_binding.prepare("SELECT id FROM users").unwrap();
-    let users_iter=users_prepare.query_map(params![], |row|{row.get(0)}).unwrap();
-    for i in users_iter{
+    }
+    let mut pool_binding = pool.get().unwrap();
+    let mut users_prepare = pool_binding.prepare("SELECT id FROM users").unwrap();
+    let users_iter = users_prepare
+        .query_map(params![], |row| row.get(0))
+        .unwrap();
+    for i in users_iter {
         users.push(i.unwrap());
-    }let from_time="1022-08-27T02:05:29.000Z".to_string();
-    let to_time="3022-08-27T02:05:30.000Z".to_string();
-    if conn!=0{
-        pool.get().unwrap().execute("UPDATE contests SET problem_ids=?1,user_ids=?2", params![serde_json::to_string(&problems).unwrap(),serde_json::to_string(&users).unwrap()]);
-    }else{
-    pool.get().unwrap().execute("INSERT INTO contests VALUES (?1,?2,?3,?4,?5,?6,?7)", params![0,"root".to_string(),from_time,to_time,serde_json::to_string(&problems).unwrap(),serde_json::to_string(&users).unwrap(),1<<30]);
-}}
+    }
+    let from_time = "1022-08-27T02:05:29.000Z".to_string();
+    let to_time = "3022-08-27T02:05:30.000Z".to_string();
+    if conn != 0 {
+        pool.get().unwrap().execute(
+            "UPDATE contests SET problem_ids=?1,user_ids=?2",
+            params![
+                serde_json::to_string(&problems).unwrap(),
+                serde_json::to_string(&users).unwrap()
+            ],
+        );
+    } else {
+        pool.get().unwrap().execute(
+            "INSERT INTO contests VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                0,
+                "root".to_string(),
+                from_time,
+                to_time,
+                serde_json::to_string(&problems).unwrap(),
+                serde_json::to_string(&users).unwrap(),
+                1 << 30
+            ],
+        );
+    }
+}
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
@@ -1693,10 +1930,14 @@ async fn main() -> std::io::Result<()> {
         Some(r) => r.clone(),
         None => "127.0.0.1".to_string(),
     };
-    let port_address:u16 = match config.server.bind_port {
+    let port_address: u16 = match config.server.bind_port {
         Some(r) => r,
         None => 12345,
     };
+    //remove database
+    if cli.flush_data {
+        std::fs::remove_file("file.db");
+    }
     let manager = SqliteConnectionManager::file("file.db");
     let mut pool = r2d2::Pool::new(manager).unwrap();
     pool.get()
@@ -1722,13 +1963,18 @@ async fn main() -> std::io::Result<()> {
         )
         .unwrap();
     pool = pool.clone();
-    pool.get().unwrap().execute(
+    pool.get()
+        .unwrap()
+        .execute(
             "
     CREATE TABLE IF NOT EXISTS users(
         id INTERGER PRIMARY KEY,
         name TEXT NOT NULL
     )
-    ",params![],).unwrap();
+    ",
+            params![],
+        )
+        .unwrap();
     pool = pool.clone();
     let conn: usize = pool
         .get()
@@ -1743,7 +1989,10 @@ async fn main() -> std::io::Result<()> {
             .unwrap()
             .execute("INSERT INTO users (id, name) VALUES (?1, ?2)", (0, "root"));
     }
-    pool.get().unwrap().execute("CREATE TABLE IF NOT EXISTS contests(
+    pool.get()
+        .unwrap()
+        .execute(
+            "CREATE TABLE IF NOT EXISTS contests(
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         from_time TEXT NOT NULL,
@@ -1751,11 +2000,19 @@ async fn main() -> std::io::Result<()> {
         problem_ids TEXT NOT NULL,
         user_ids TEXT NOT NULL,
         submission_limit INTEGER
-    )",params![]).unwrap();
+    )",
+            params![],
+        )
+        .unwrap();
     //TODO:创建比赛id为0的比赛,补充：可能不需要
     create_contest0(&config, pool.clone());
-    let conn:usize=pool.get().unwrap().query_row("SELECT count(*) FROM contests WHERE id=0", [], |row| row.get(0))
-    .unwrap();
+    let conn: usize = pool
+        .get()
+        .unwrap()
+        .query_row("SELECT count(*) FROM contests WHERE id=0", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
     println!("after insert contest0:{}", conn);
     HttpServer::new(move || {
         App::new()

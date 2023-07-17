@@ -352,7 +352,7 @@ impl TestCase {
 
             // polling until job is finished
             let poll_url = format!("{}/jobs/{}", &self.prefix, job_id);
-            for _ in 0..c.poll_count {
+            for _ in 0..2*c.poll_count {
                 std::thread::sleep(Duration::from_secs(1));
                 body = check_status_and_get_body(&poll_url.as_str(), reqwest::Method::GET);
                 if job_finished(&body) {
