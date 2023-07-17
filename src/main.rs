@@ -225,11 +225,6 @@ struct JobQuery {
     result: Option<EnumResult>,
 }
 fn match_result(out_file: String, ans_file: String, compare: ProblemType) -> EnumResult {
-    println!(
-        "out_file:{},ans_file:{}",
-        out_file.clone(),
-        ans_file.clone()
-    );
     let mut out_stream = File::open(out_file).unwrap();
     let mut ans_stream = File::open(ans_file).unwrap();
     let mut buffer_out = String::new();
@@ -312,6 +307,7 @@ fn execute_input(
     problem: Problem,
     language: Language,
 ) {
+    log::info!("enter execute_input");
     let task_id = message.id;
     std::fs::create_dir(format!("temp{}", task_id));
     let folder_name = format!("temp{}", task_id);
@@ -328,12 +324,7 @@ fn execute_input(
             *i = src_path.clone();
         }
     }
-    //print arg_vec
-    print!("argsvec:");
-    for i in &args_vec {
-        print!("{} ", i);
-    }
-    println!("");
+    log::info!("before compilation");
     let first_arg = args_vec.remove(0);
     let compile_time_start = Utc::now();
     message.state = State::Running;
@@ -390,6 +381,7 @@ fn execute_input(
         std::fs::remove_dir_all(folder_name).unwrap();
         return;
     }
+    log::info!("after compilation");
     message.cases[0].result = EnumResult::CompilationSuccess;
     //update task table
     let conn = pool.get().unwrap().execute(
@@ -402,7 +394,7 @@ fn execute_input(
     );
     let execute_path = format!("{}/test", folder_name);
     let mut index = 1;
-    let mut output_path = Vec::new();
+    //let mut output_path = Vec::new();
     //check if misc has packing
     let mut has_packing = false;
     let mut vec_packing: Vec<Vec<i32>> = Vec::new();
@@ -414,10 +406,12 @@ fn execute_input(
     }
     //start executing program
     for i in &problem.cases {
+        log::info!("in loop");
         if let EnumResult::Skipped = message.cases[index].result {
+            index += 1;
             continue;
         }
-        output_path.push(format!("{}/{}.out", folder_name, index));
+        //output_path.push(format!("{}/{}.out", folder_name, index));
         let out_path = format!("{}/{}.out", folder_name, index);
         let out_file = File::create(&out_path).unwrap();
         let in_file = File::open(&i.input_file).unwrap();
@@ -513,6 +507,7 @@ fn execute_input(
             ),
         );
     }
+    log::info!("loop finished");
     //update final result
     message.state = State::Finished;
     //patch has_packing
@@ -577,6 +572,7 @@ fn execute_input(
             message.id,
         ),
     );
+    log::info!("before exit");
     std::fs::remove_dir_all(folder_name).unwrap();
 }
 #[post("/jobs")]
@@ -586,6 +582,7 @@ async fn post_jobs(
     mut pool: web::Data<Pool<SqliteConnectionManager>>,
 ) -> impl Responder {
     //check if in config
+    log::info!("enter post_jobs;time:{}", Utc::now().to_rfc2822());
     let created_time = Utc::now();
     let mut is_language = false;
     let mut is_problem = false;
@@ -683,17 +680,17 @@ async fn post_jobs(
         vec_contest.push(i.unwrap());
     } //check if user_id is in contest user_ids
     if (!vec_contest[0].user_ids.contains(&body.user_id)) && (body.contest_id != 0) {
-        return HttpResponse::NotFound().json(ErrorMessage {
-            code: 3,
-            reason: ErrorReason::ErrNotFound,
+        return HttpResponse::BadRequest().json(ErrorMessage {
+            code: 1,
+            reason: ErrorReason::ErrInvalidArgument,
             message: format!("user_id {} not found in contest.", body.user_id),
         });
     }
     //check if problem_id is in contest problem_ids
     if !vec_contest[0].problem_ids.contains(&body.problem_id) && (body.contest_id != 0) {
-        return HttpResponse::NotFound().json(ErrorMessage {
-            code: 3,
-            reason: ErrorReason::ErrNotFound,
+        return HttpResponse::BadRequest().json(ErrorMessage {
+            code: 1,
+            reason: ErrorReason::ErrInvalidArgument,
             message: format!("problem_id {} not found in contest.", body.problem_id),
         });
     }
@@ -722,11 +719,12 @@ async fn post_jobs(
         .unwrap();
     if (cnt as i32) >= vec_contest[0].submission_limit {
         return HttpResponse::BadRequest().json(ErrorMessage {
-            code: 1,
+            code: 4,
             reason: ErrorReason::ErrRateLimit,
             message: "exceed submission limit".to_string(),
         });
     }
+    log::info!("post_jobs_after check");
     //create temporary directory
     let mut vec_cases = Vec::new();
     for i in 0..config.problems[problem_index].cases.len() + 1 {
@@ -1192,12 +1190,12 @@ async fn get_users(mut pool: web::Data<Pool<SqliteConnectionManager>>) -> impl R
     HttpResponse::Ok().json(user_vec)
 }
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all="snake_case")]
+#[serde(rename_all = "snake_case")]
 enum ScoringRule {
     Latest,
     Highest,
 }
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 struct ScoringRuleStandard {
     submit_time: Option<DateTime<Utc>>,
     score: f64,
@@ -1506,14 +1504,14 @@ async fn get_contest_ranklist(
                     }
                 }
             }
-        } 
+        }
         //update final score
         for i in &user.scores {
             user.final_score += i.score;
         }
     }
     //sort vec_ranklist
-    println!("{:?}",vec_ranklist);
+    println!("{:?}", vec_ranklist);
     println!("before sort vec_ranklist_len{}", vec_ranklist.len());
     vec_ranklist.sort_by(|a, b| {
         match sort_by_standard(a, b, rank_rule.tie_breaker.clone(), pool.clone()) {
@@ -1522,7 +1520,7 @@ async fn get_contest_ranklist(
             Ordering::Equal => a.user.id.cmp(&b.user.id),
         }
     });
-    println!("after sort:{:?}",vec_ranklist);
+    println!("after sort:{:?}", vec_ranklist);
     //generate return list
     let mut vec_return = Vec::new();
     for i in 0..vec_ranklist.len() {
@@ -1550,7 +1548,7 @@ async fn get_contest_ranklist(
                     rank = vec_return[i - 1].rank;
                 }
                 _ => {
-                    rank = (i+1) as i32;
+                    rank = (i + 1) as i32;
                 }
             }
             vec_return.push(RanklistReturn {
@@ -1564,8 +1562,10 @@ async fn get_contest_ranklist(
                     vec_scores
                 },
             });
-        }println!("vec_ret len:{}",vec_return.len());        
-    }return HttpResponse::Ok().json(vec_return);
+        }
+        println!("vec_ret len:{}", vec_return.len());
+    }
+    return HttpResponse::Ok().json(vec_return);
 }
 #[derive(Serialize, Deserialize)]
 struct ContestInput {
@@ -1682,13 +1682,6 @@ async fn post_contest(
                 |row| row.get(0),
             )
             .unwrap();
-        if *i == 0 {
-            return HttpResponse::BadRequest().json(ErrorMessage {
-                code: 1,
-                reason: ErrorReason::ErrInvalidArgument,
-                message: "Invalid argument user_ids".to_string(),
-            });
-        }
         if t == 0 {
             return HttpResponse::NotFound().json(ErrorMessage {
                 code: 3,
@@ -1714,14 +1707,9 @@ async fn post_contest(
     for i in &config.problems {
         all_problemid_vec.push(i.id);
     }
+    println!("{:?}", all_problemid_vec);
+    println!("{:?}", contest.problem_ids);
     for i in &contest.problem_ids {
-        if *i == 0 {
-            return HttpResponse::BadRequest().json(ErrorMessage {
-                code: 1,
-                reason: ErrorReason::ErrInvalidArgument,
-                message: "Invalid argument problem_ids".to_string(),
-            });
-        }
         let mut is_find = false;
         for j in &all_problemid_vec {
             if i == j {
