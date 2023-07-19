@@ -30,7 +30,7 @@ use rank_sort::{
     sort_by_standard, RankRule, RanklistEntry, RanklistReturn, ScoringRule, ScoringRuleStandard,
     User,
 };
-use std::process::{Command,Stdio};
+use std::process::{Command, Stdio};
 #[get("/hello/{name}")]
 async fn greet(name: web::Path<String>) -> impl Responder {
     log::info!(target: "greet_handler", "Greeting {}", name);
@@ -311,6 +311,7 @@ async fn get_jobs(
     info: web::Query<JobQuery>,
     mut pool: web::Data<Pool<SqliteConnectionManager>>,
 ) -> impl Responder {
+    //create query-string
     let mut query_str = String::new();
     if let Some(s) = info.user_id {
         query_str.push_str(&format!("user_id={}", s));
@@ -387,8 +388,6 @@ async fn get_jobs(
         query_str = t;
     }
     pool = pool.clone();
-    println!("uery_str:{}", &query_str);
-    println!("{}", format!("SELECT * FROM task{}", &query_str));
     let conn = pool.get().unwrap();
     let mut t = conn
         .prepare(&format!("SELECT * FROM task{}", query_str))
@@ -517,6 +516,7 @@ async fn put_jobs(
     config: web::Data<Configure>,
 ) -> impl Responder {
     pool = pool.clone();
+    //get message
     let conn = pool.get().unwrap();
     let mut t = conn
         .prepare(&format!("SELECT * FROM task WHERE id={}", id))
@@ -556,7 +556,7 @@ async fn put_jobs(
             message: format!("Job {} not found.", id),
         });
     }
-    let message = task_vec.pop().unwrap();
+    let mut message = task_vec.pop().unwrap();
     if let State::Finished = message.state {
     } else {
         return HttpResponse::BadRequest().json(ErrorMessage {
@@ -565,6 +565,7 @@ async fn put_jobs(
             message: format!("Job {} not finished.", id),
         });
     } //retest
+      //get language
     let mut language_index = 0;
     for i in &config.languages {
         if i.name == message.submission.language {
@@ -573,13 +574,47 @@ async fn put_jobs(
         language_index += 1;
     }
     let language = config.languages[language_index as usize].clone();
+    //get problem
     let mut problem = config.problems[0].clone();
     for i in &config.problems {
         if i.id == message.submission.problem_id {
             problem = i.clone();
         }
     }
-    let message_return = message.clone();
+    //generate message return,update message
+    let mut message_return = message.clone();
+    message_return.result = EnumResult::Waiting;
+    message_return.score = 0.0;
+    message_return.state = State::Queueing;
+    message_return.updated_time = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    for i in &mut message_return.cases {
+        i.result = EnumResult::Waiting;
+        i.time = 0;
+        i.memory = 0;
+        i.info = String::new();
+    }
+    message.result = EnumResult::Waiting;
+    message.score = 0.0;
+    message.state = State::Queueing;
+    message.updated_time = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    for i in &mut message.cases {
+        i.result = EnumResult::Waiting;
+        i.time = 0;
+        i.memory = 0;
+        i.info = String::new();
+    }
+    pool.get().unwrap().execute(
+        "UPDATE tasks SET updated_time=?1,state=?2,result=?3,score=?4,cases=?5 WHERE id=?6",
+        params![
+            &message.updated_time.clone(),
+            message.state.to_string(),
+            message.result.to_string(),
+            &message.score,
+            &serde_json::to_string(&message.cases).unwrap(),
+            &message.id
+        ],
+    );
+    //update sql
     let _ = spawn(async {
         block(move || {
             execute_input(message, pool.clone(), problem, language);
@@ -878,16 +913,13 @@ async fn get_contest_ranklist(
         }
     }
     //sort vec_ranklist
-    println!("{:?}", vec_ranklist);
-    println!("before sort vec_ranklist_len{}", vec_ranklist.len());
-    vec_ranklist.sort_by(|a, b| {
+    vec_ranklist.sort_by(|a: &RanklistEntry, b| {
         match sort_by_standard(a, b, rank_rule.tie_breaker.clone(), pool.clone()) {
             Ordering::Greater => Ordering::Greater,
             Ordering::Less => Ordering::Less,
             Ordering::Equal => a.user.id.cmp(&b.user.id),
         }
     });
-    println!("after sort:{:?}", vec_ranklist);
     //generate return list
     let mut vec_return = Vec::new();
     for i in 0..vec_ranklist.len() {
@@ -930,7 +962,6 @@ async fn get_contest_ranklist(
                 },
             });
         }
-        println!("vec_ret len:{}", vec_return.len());
     }
     return HttpResponse::Ok().json(vec_return);
 }
@@ -1074,8 +1105,6 @@ async fn post_contest(
     for i in &config.problems {
         all_problemid_vec.push(i.id);
     }
-    println!("{:?}", all_problemid_vec);
-    println!("{:?}", contest.problem_ids);
     for i in &contest.problem_ids {
         let mut is_find = false;
         for j in &all_problemid_vec {
@@ -1264,12 +1293,12 @@ fn create_contest0(config: &Configure, pool: Pool<SqliteConnectionManager>) {
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
     //remove all the past temporary directories
-    let ls=Command::new("ls").output().unwrap();
-    let out_ls=ls.stdout.as_slice();
-    let vec_dir=String::from_utf8(out_ls.to_vec()).unwrap();
-    let vec_str:Vec<&str>=vec_dir.split_ascii_whitespace().collect();
-    for i in vec_str{
-        if i.contains("temp"){
+    let ls = Command::new("ls").output().unwrap();
+    let out_ls = ls.stdout.as_slice();
+    let vec_dir = String::from_utf8(out_ls.to_vec()).unwrap();
+    let vec_str: Vec<&str> = vec_dir.split_ascii_whitespace().collect();
+    for i in vec_str {
+        if i.contains("temp") {
             std::fs::remove_dir_all(i.to_string());
         }
     }

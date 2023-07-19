@@ -13,6 +13,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+use wait4::Wait4;
 use wait_timeout::ChildExt;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Submit {
@@ -130,19 +131,10 @@ pub fn execute_input(
     problem: Problem,
     language: Language,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    log::info!("enter execute_input");
     let task_id = message.id;
     std::fs::create_dir(format!("temp{}", task_id))?;
     let folder_name = format!("temp{}", task_id);
-    log::info!("before pathbuf");
     let src_path = format!("temp{}/{}", task_id, language.file_name);
-    /*let mut src_path = PathBuf::new();
-    src_path.push(folder_name.clone());
-    src_path.push(language.file_name.clone());
-    let src_path: PathBuf = [folder_name.clone(), language.file_name.clone()]
-        .iter()
-        .collect();*/
-    log::info!("before create src_path");
     let mut buffer = std::fs::File::create(src_path.clone())?;
     buffer
         .write(message.submission.source_code.as_bytes())
@@ -150,12 +142,11 @@ pub fn execute_input(
     let mut args_vec = language.command.clone();
     for i in &mut args_vec {
         if i == "%OUTPUT%" {
-                *i=format!("{}/test",folder_name);
+            *i = format!("{}/test", folder_name);
         } else if i == "%INPUT%" {
             *i = src_path.clone();
         }
     }
-    log::info!("before compilation");
     let first_arg = args_vec.remove(0);
     let compile_time_start = Utc::now();
     message.state = State::Running;
@@ -212,7 +203,6 @@ pub fn execute_input(
         std::fs::remove_dir_all(folder_name)?;
         return Ok(());
     }
-    log::info!("after compilation");
     message.cases[0].result = EnumResult::CompilationSuccess;
     //update task table
     let _ = pool.get()?.execute(
@@ -231,7 +221,6 @@ pub fn execute_input(
         i
     };
     let mut index = 1;
-    //let mut output_path = Vec::new();
     //check if misc has packing
     let mut has_packing = false;
     let mut vec_packing: Vec<Vec<i32>> = Vec::new();
@@ -243,7 +232,6 @@ pub fn execute_input(
     }
     //start executing program
     for i in &problem.cases {
-        log::info!("in loop");
         if let EnumResult::Skipped = message.cases[index].result {
             index += 1;
             continue;
@@ -349,7 +337,6 @@ pub fn execute_input(
             ),
         );
     }
-    log::info!("loop finished");
     //update final result
     message.state = State::Finished;
     //patch has_packing
@@ -364,6 +351,14 @@ pub fn execute_input(
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+    //patch dynamic_ranking
+    if let ProblemType::DynamicRanking = problem.ty {
+        if let Some(r) = problem.misc {
+            if let Some(f) = r.dynamic_ranking_ratio {
+                message.score *= 1.0 - f;
             }
         }
     }
@@ -412,7 +407,6 @@ pub fn execute_input(
             message.id,
         ),
     );
-    log::info!("before exit");
     std::fs::remove_dir_all(folder_name)?;
     Ok(())
 }
