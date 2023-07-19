@@ -135,13 +135,13 @@ pub fn execute_input(
     std::fs::create_dir(format!("temp{}", task_id))?;
     let folder_name = format!("temp{}", task_id);
     log::info!("before pathbuf");
-    //let src_path = format!("temp{}/{}", task_id, language.file_name);
-    let mut src_path = PathBuf::new();
+    let src_path = format!("temp{}/{}", task_id, language.file_name);
+    /*let mut src_path = PathBuf::new();
     src_path.push(folder_name.clone());
     src_path.push(language.file_name.clone());
     let src_path: PathBuf = [folder_name.clone(), language.file_name.clone()]
         .iter()
-        .collect();
+        .collect();*/
     log::info!("before create src_path");
     let mut buffer = std::fs::File::create(src_path.clone())?;
     buffer
@@ -150,15 +150,9 @@ pub fn execute_input(
     let mut args_vec = language.command.clone();
     for i in &mut args_vec {
         if i == "%OUTPUT%" {
-            *i = {
-                let mut i = PathBuf::new();
-                i.push(folder_name.clone());
-                i.push("test".to_string());
-                let i: PathBuf = i.iter().collect();
-                i.to_str().unwrap().to_string()
-            }
+                *i=format!("{}/test",folder_name);
         } else if i == "%INPUT%" {
-            *i = src_path.to_str().unwrap().to_string();
+            *i = src_path.clone();
         }
     }
     log::info!("before compilation");

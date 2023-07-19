@@ -30,6 +30,7 @@ use rank_sort::{
     sort_by_standard, RankRule, RanklistEntry, RanklistReturn, ScoringRule, ScoringRuleStandard,
     User,
 };
+use std::process::{Command,Stdio};
 #[get("/hello/{name}")]
 async fn greet(name: web::Path<String>) -> impl Responder {
     log::info!(target: "greet_handler", "Greeting {}", name);
@@ -1262,6 +1263,16 @@ fn create_contest0(config: &Configure, pool: Pool<SqliteConnectionManager>) {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+    //remove all the past temporary directories
+    let ls=Command::new("ls").output().unwrap();
+    let out_ls=ls.stdout.as_slice();
+    let vec_dir=String::from_utf8(out_ls.to_vec()).unwrap();
+    let vec_str:Vec<&str>=vec_dir.split_ascii_whitespace().collect();
+    for i in vec_str{
+        if i.contains("temp"){
+            std::fs::remove_dir_all(i.to_string());
+        }
+    }
     let cli = Cli::parse();
     let config: Configure;
     match cli.config {
