@@ -340,12 +340,13 @@ pub fn execute_input_inner(
         message.updated_time = updated_time.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
         pool = pool.clone();
         let _ = pool.get()?.execute(
-            "UPDATE task SET cases=?1,updated_time=?2,score=?3 WHERE id=?4",
+            "UPDATE task SET cases=?1,updated_time=?2,score=?3,result=?5 WHERE id=?4",
             (
                 serde_json::to_string(&message.cases)?,
                 message.updated_time.clone(),
                 message.score,
                 message.id,
+                message.result.to_string()
             ),
         );
     }
