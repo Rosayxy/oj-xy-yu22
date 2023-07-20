@@ -2,4 +2,5 @@
 *.stdout
 *.stderr
 *.http
+*.db
 tmp/
