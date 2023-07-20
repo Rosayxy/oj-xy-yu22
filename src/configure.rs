@@ -52,6 +52,6 @@ pub fn get_configure(json_path: String) -> Configure {
     let mut f = std::fs::File::open(json_path.clone()).unwrap();
     let mut buffer = String::new();
     f.read_to_string(&mut buffer).unwrap();
-    let parse = serde_json::from_str(&buffer).unwrap();
+    let parse: Configure = serde_json::from_str(&buffer).unwrap();
     parse
 }

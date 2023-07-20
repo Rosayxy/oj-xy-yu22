@@ -110,28 +110,46 @@ pub fn sort_by_standard(
                     return Ordering::Greater;
                 } else {
                     let mut submit_time_a: DateTime<Utc> = Utc
-                        .datetime_from_str("4022-08-27T02:05:29.000Z", "%Y-%m-%dT%H:%M:%S%.3fZ")
+                        .datetime_from_str("1022-08-27T02:05:29.000Z", "%Y-%m-%dT%H:%M:%S%.3fZ")
                         .unwrap();
                     let mut submit_time_b: DateTime<Utc> = submit_time_a.clone();
                     for i in &a.scores {
                         match i.submit_time {
                             Some(t) => {
-                                if t < submit_time_a {
+                                if t > submit_time_a {
                                     submit_time_a = t.clone();
                                 }
                             }
                             None => {}
                         }
                     }
+                    if submit_time_a
+                        == Utc
+                            .datetime_from_str("1022-08-27T02:05:29.000Z", "%Y-%m-%dT%H:%M:%S%.3fZ")
+                            .unwrap()
+                    {
+                        submit_time_a = Utc
+                            .datetime_from_str("4022-08-27T02:05:29.000Z", "%Y-%m-%dT%H:%M:%S%.3fZ")
+                            .unwrap();
+                    }
                     for i in &b.scores {
                         match i.submit_time {
                             Some(t) => {
-                                if t < submit_time_b {
+                                if t > submit_time_b {
                                     submit_time_b = t.clone();
                                 }
                             }
                             None => {}
                         }
+                    }
+                    if submit_time_b
+                        == Utc
+                            .datetime_from_str("1022-08-27T02:05:29.000Z", "%Y-%m-%dT%H:%M:%S%.3fZ")
+                            .unwrap()
+                    {
+                        submit_time_b = Utc
+                            .datetime_from_str("4022-08-27T02:05:29.000Z", "%Y-%m-%dT%H:%M:%S%.3fZ")
+                            .unwrap();
                     }
                     if submit_time_a < submit_time_b {
                         return Ordering::Less;

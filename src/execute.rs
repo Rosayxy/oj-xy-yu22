@@ -125,7 +125,7 @@ pub fn match_result_spj(list: Vec<String>) -> (EnumResult, String) {
         }
     }
 }
-pub fn execute_input(
+pub fn execute_input_inner(
     mut message: Message,
     mut pool: web::Data<Pool<SqliteConnectionManager>>,
     problem: Problem,
@@ -236,7 +236,6 @@ pub fn execute_input(
             index += 1;
             continue;
         }
-        //output_path.push(format!("{}/{}.out", folder_name, index));
         let out_path = {
             let mut i = PathBuf::new();
             i.push(folder_name.clone());
@@ -316,6 +315,7 @@ pub fn execute_input(
                             }
                         }
                     }
+                    //assign others in the pack status skipped
                     for i in col + 1..vec_packing[row].len() {
                         message.cases[vec_packing[row][i] as usize].result = EnumResult::Skipped;
                     }
@@ -409,4 +409,24 @@ pub fn execute_input(
     );
     std::fs::remove_dir_all(folder_name)?;
     Ok(())
+}
+pub fn execute_input(
+    message: Message,
+    pool: web::Data<Pool<SqliteConnectionManager>>,
+    problem: Problem,
+    language: Language,
+) {
+    let id = message.id;
+    match execute_input_inner(message, pool.clone(), problem, language) {
+        Ok(_ok) => {}
+        Err(_r) => {
+            pool.get()
+                .unwrap()
+                .execute(
+                    "UPDATE task SET result=?1 WHERE id=?2",
+                    (EnumResult::SystemError.to_string(), id),
+                )
+                .unwrap();
+        }
+    }
 }

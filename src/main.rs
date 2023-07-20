@@ -30,7 +30,7 @@ use rank_sort::{
     sort_by_standard, RankRule, RanklistEntry, RanklistReturn, ScoringRule, ScoringRuleStandard,
     User,
 };
-use std::process::{Command, Stdio};
+use std::process::Command;
 #[get("/hello/{name}")]
 async fn greet(name: web::Path<String>) -> impl Responder {
     log::info!(target: "greet_handler", "Greeting {}", name);
@@ -136,8 +136,8 @@ async fn post_jobs(
     //check contest_id
     let mut cnt: usize = 0;
     let conn1: Result<usize> = pool.get().map_err(ErrorMessage::r2error)?.query_row(
-        "SELECT count(*) FROM users WHERE id=?1",
-        params![body.user_id],
+        "SELECT count(*) FROM contests WHERE id=?1",
+        params![body.contest_id],
         |row| row.get(0),
     );
     match conn1 {
@@ -159,7 +159,7 @@ async fn post_jobs(
             message: format!("Contest {} not found.", body.contest_id),
         }));
     }
-    //create contest element
+    //get contest element
     let conn = pool.get().map_err(ErrorMessage::r2error)?;
     let mut t = conn
         .prepare("SELECT * FROM contests WHERE id=?1")
@@ -188,7 +188,8 @@ async fn post_jobs(
     let mut vec_contest = Vec::new();
     for i in contests_iter {
         vec_contest.push(i?);
-    } //check if user_id is in contest user_ids
+    }
+    //check if user_id is in contest user_ids
     if (!vec_contest[0].user_ids.contains(&body.user_id)) && (body.contest_id != 0) {
         return Ok(HttpResponse::BadRequest().json(ErrorMessage {
             code: 1,
@@ -218,8 +219,8 @@ async fn post_jobs(
         .get()
         .map_err(ErrorMessage::r2error)?
         .query_row(
-            "SELECT count(*) FROM task WHERE user_id=?1 AND contest_id=?2",
-            params![body.user_id, body.contest_id],
+            "SELECT count(*) FROM task WHERE user_id=?1 AND contest_id=?2 AND problem_id=?3",
+            params![body.user_id, body.contest_id, body.problem_id],
             |row| row.get(0),
         )
         .map_err(ErrorMessage::rusqlite_error)?;
@@ -230,7 +231,6 @@ async fn post_jobs(
             message: "exceed submission limit".to_string(),
         }));
     }
-    log::info!("post_jobs_after check");
     //create temporary directory
     let mut vec_cases = Vec::new();
     for i in 0..config.problems[problem_index].cases.len() + 1 {
@@ -300,7 +300,7 @@ async fn post_jobs(
     let problem = config.problems[problem_index].clone();
     let _detached = spawn(async {
         block(move || {
-            let _ = execute_input(message, pool.clone(), problem, language);
+            execute_input(message, pool.clone(), problem, language);
         })
         .await
     });
@@ -322,7 +322,7 @@ async fn get_jobs(
             .get()
             .unwrap()
             .query_row(
-                "SELECT count(*) FROM users WHERE id=?1",
+                "SELECT count(*) FROM users WHERE name=?1",
                 params![s.clone()],
                 |row| row.get(0),
             )
@@ -422,6 +422,7 @@ async fn get_jobs(
     //select from and to
     if let Some(r) = &info.from {
         let t = Utc.datetime_from_str(&r, "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap();
+        let mut vec_select2 = Vec::new();
         for mut i in 0..vec_select.len() as i32 {
             let ti = Utc
                 .datetime_from_str(
@@ -431,13 +432,15 @@ async fn get_jobs(
                 .unwrap();
             let duration = ti.signed_duration_since(t);
             if let core::cmp::Ordering::Less = duration.cmp(&chrono::Duration::zero()) {
-                vec_select.remove(i as usize);
-                i -= 1;
+            } else {
+                vec_select2.push(vec_select[i as usize].clone());
             }
         }
+        vec_select = vec_select2;
     }
     if let Some(r) = &info.to {
         let t = Utc.datetime_from_str(&r, "%Y-%m-%dT%H:%M:%S%.3fZ").unwrap();
+        let mut vec_select2 = Vec::new();
         for mut i in 0..vec_select.len() as i32 {
             let ti = Utc
                 .datetime_from_str(
@@ -447,10 +450,11 @@ async fn get_jobs(
                 .unwrap();
             let duration = ti.signed_duration_since(t);
             if let core::cmp::Ordering::Greater = duration.cmp(&chrono::Duration::zero()) {
-                vec_select.remove(i as usize);
-                i -= 1;
+            } else {
+                vec_select2.push(vec_select[i as usize].clone());
             }
         }
+        vec_select = vec_select2;
     }
     //vec_select sort
     vec_select.sort_by(|a, b| {
@@ -603,7 +607,7 @@ async fn put_jobs(
         i.memory = 0;
         i.info = String::new();
     }
-    pool.get().unwrap().execute(
+    let _ = pool.get().unwrap().execute(
         "UPDATE tasks SET updated_time=?1,state=?2,result=?3,score=?4,cases=?5 WHERE id=?6",
         params![
             &message.updated_time.clone(),
@@ -615,7 +619,7 @@ async fn put_jobs(
         ],
     );
     //update sql
-    let _ = spawn(async {
+    let _detached = spawn(async {
         block(move || {
             execute_input(message, pool.clone(), problem, language);
         })
@@ -690,9 +694,7 @@ async fn post_users(
                 .unwrap()
                 .query_row("SELECT max(id) FROM users", [], |row| row.get(0))
                 .unwrap();
-            println!("conn_for user_id max:{}", conn);
             user_id = conn + 1;
-            println!("user_id:{}", user_id);
             pool = pool.clone();
             let _ = pool.get().unwrap().execute(
                 "INSERT INTO users (id,name) VALUES (?1,?2)",
@@ -824,7 +826,6 @@ async fn get_contest_ranklist(
                 scores: Vec::new(),
             });
         }
-        println!("vec_ranklist's length:{}", vec_ranklist.len());
         //get all problems's id
         for i in &config.problems {
             vec_problem_id.push(i.id);
@@ -854,12 +855,12 @@ async fn get_contest_ranklist(
             }
             //if no submission found for that user and the problem
             if vec_submit.len() == 0 {
-                println!("push when length is zero");
                 user.scores.push(ScoringRuleStandard {
                     submit_time: None,
                     score: (0.0),
                 });
             } else {
+                //at least one submit
                 //get the qualified one for the user and the problem
                 match rank_rule.scoring_rule {
                     Some(ScoringRule::Highest) => {
@@ -871,6 +872,8 @@ async fn get_contest_ranklist(
                                     if let Some(btime) = b.submit_time {
                                         if atime < btime {
                                             Ordering::Less
+                                        } else if atime == btime {
+                                            Ordering::Equal
                                         } else {
                                             Ordering::Greater
                                         }
@@ -1035,6 +1038,7 @@ async fn post_contest(
                     message: format!("Contest {} not found.", i),
                 });
             }
+            id = i as usize;
         }
     } //check if invalid
       //check if valid from and to time
@@ -1095,7 +1099,7 @@ async fn post_contest(
                     return HttpResponse::BadRequest().json(ErrorMessage {
                         code: 1,
                         reason: ErrorReason::ErrInvalidArgument,
-                        message: "Invalid argument user_ids".to_string(),
+                        message: "Invalid argument problem_ids".to_string(),
                     });
                 }
             }
@@ -1196,12 +1200,19 @@ async fn get_contest_id(
     id: web::Path<i32>,
     mut pool: web::Data<Pool<SqliteConnectionManager>>,
 ) -> impl Responder {
+    if *id == 0 {
+        return HttpResponse::BadRequest().json(ErrorMessage {
+            code: 1,
+            reason: ErrorReason::ErrInvalidArgument,
+            message: "Invalid contest id".to_string(),
+        });
+    }
     pool = pool.clone();
     let conn: usize = pool
         .get()
         .unwrap()
         .query_row(
-            "SELECT count(*) FROM users WHERE id=?1",
+            "SELECT count(*) FROM contests WHERE id=?1",
             params![*id],
             |row| row.get(0),
         )
