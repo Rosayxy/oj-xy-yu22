@@ -258,6 +258,9 @@ pub fn execute_input_inner(
                 message.cases[index].time = t.as_micros() as i32;
                 if !child_status.success() {
                     message.cases[index].result = EnumResult::RuntimeError;
+                    if let EnumResult::Running=message.result{
+                        message.result=EnumResult::RuntimeError;
+                    }
                 } else {
                     //if spj
                     if let ProblemType::Spj = problem.ty {
@@ -285,6 +288,12 @@ pub fn execute_input_inner(
                             problem.cases[index - 1].answer_file.clone(),
                             problem.ty.clone(),
                         )?;
+                    }//assign message.result
+                    if let EnumResult::Running=message.result{
+                        if let EnumResult::Accepted=message.cases[index].result{
+                        }else{
+                            message.result=message.cases[index].result.clone();
+                        }
                     }
                     if let EnumResult::Accepted = message.cases[index].result {
                         message.score += problem.cases[index - 1].score;
@@ -294,6 +303,9 @@ pub fn execute_input_inner(
             None => {
                 message.cases[index].time = i.time_limit;
                 message.cases[index].result = EnumResult::TimeLimitExceeded;
+                if let EnumResult::Running=message.result{
+                    message.result=EnumResult::TimeLimitExceeded;
+                }
                 child.kill()?;
                 child.wait()?;
             }
